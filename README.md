@@ -19,6 +19,12 @@ and an approximate F-based set for each hinge fit's break year.
 Design, decisions, and data checks: `docs/design.md`. Data sources and
 licenses: `DATA_SOURCES.md`. Private repo; not yet on the family hub.
 
+<!-- terms -->
+> **Terms used in this analysis.** Dotted-underlined terms anywhere below repeat these definitions on hover ([full glossary](https://github.com/ismayc/basketball-data-science/blob/main/docs/glossary.md)).
+>
+> *(no specialized metric terms in this document)*
+<!-- /terms -->
+
 ## Results
 
 <!-- gen:results -->
