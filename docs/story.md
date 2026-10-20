@@ -67,7 +67,7 @@ of creators per game rose from 5.32 to 5.53 (+0.21, interval +0.08 to
 +0.34). The most recent season, 2025-26, was the least concentrated NBA
 season of the 30, at 29.1% (27.8% to 30.5%).
 
-{{fig:fig1_game_top1_py|The top creator's share of a team's created points per game, averaged across teams, with 95% bands. The dashed segments are the NBA's first-five and last-five season means. The NBA line drifts down after the late 2000s and ends at its lowest season; the WNBA line moves around a flat level.}}
+{{fig:fig1_game_top1_py|The top creator's share of a team's created points per game, averaged across teams. The NBA carries its 95% band, and the dashed segments are its first-five and last-five season means. The NBA line drifts down after the late 2000s and ends at its lowest season; the light WNBA line, shown for reference, moves around a flat level.}}
 
 A hinge fit on the season means puts the NBA's turn in 2008, but its
 approximate 95% set runs from 2005 to 2022. The data date a slow drift, not

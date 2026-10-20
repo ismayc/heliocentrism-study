@@ -40,6 +40,7 @@ FIG = ROOT / "figures"
 LEAGUES = {"nba": "NBA", "wnba": "WNBA"}
 COLORS = {"nba": "#2a78d6", "wnba": "#eb6834"}
 BAND = {"nba": "rgba(42,120,214,0.13)", "wnba": "rgba(235,104,52,0.13)"}
+WNBA_LIGHT = "#f0a483"   # reference-only WNBA line on fig1
 CLOUD = {"nba": "rgba(42,120,214,0.5)", "wnba": "rgba(235,104,52,0.5)"}
 GREY = "#898781"
 GREY_BAND = "rgba(137,135,129,0.20)"
@@ -86,13 +87,16 @@ def band(f: go.Figure, x, lo, hi, fill: str, scale: float = 100) -> None:
 
 def league_series(f: go.Figure, ls: pl.DataFrame, lg: str, metric: str, name: str,
                   color: str, fill: str, dash: str | None = None,
-                  label: str | None = None) -> pl.DataFrame:
+                  label: str | None = None, with_band: bool = True,
+                  width: float = 2) -> pl.DataFrame:
     r = ls.filter((pl.col("league") == lg) & (pl.col("metric") == metric)).sort("year")
     x = r["year"].to_list()
-    band(f, x, r["lo"].to_list(), r["hi"].to_list(), fill)
+    if with_band:
+        band(f, x, r["lo"].to_list(), r["hi"].to_list(), fill)
     f.add_trace(go.Scatter(
         x=x, y=(r["mean"] * 100).to_list(), mode="lines+markers", name=label or name,
-        line=dict(color=color, width=2, dash=dash), marker=dict(size=5, color=color),
+        line=dict(color=color, width=width, dash=dash),
+        marker=dict(size=5 if with_band else 4, color=color),
         customdata=list(zip(r["season"].to_list(), r["teams"].to_list(),
                             (r["lo"] * 100).to_list(), (r["hi"] * 100).to_list())),
         hovertemplate=f"{name} %{{customdata[0]}}: %{{y:.1f}}% "
@@ -108,10 +112,18 @@ def era_row(era: pl.DataFrame, lg: str, metric: str) -> dict:
 def fig_game_top1(ls: pl.DataFrame, era: pl.DataFrame) -> go.Figure:
     f = go.Figure()
     rows = {}
-    for lg, name in LEAGUES.items():
+    # Two overlapping bands made this unreadable. The section is about the
+    # NBA, so only the NBA carries its band; the WNBA is a light reference
+    # line (its own change is in the tiles, and fig2 tests the gap).
+    for lg in ("wnba", "nba"):
+        name = LEAGUES[lg]
         e = era_row(era, lg, "game_top1_share")
-        rows[lg] = league_series(f, ls, lg, "game_top1_share", name, COLORS[lg], BAND[lg],
-                                 label=f"{name} ({pts(e['change'])} points)")
+        nba = lg == "nba"
+        rows[lg] = league_series(
+            f, ls, lg, "game_top1_share", name, COLORS[lg] if nba else WNBA_LIGHT, BAND[lg],
+            label=(f"NBA with 95% band ({pts(e['change'])} points)" if nba
+                   else f"WNBA, for reference ({pts(e['change'])} points)"),
+            with_band=nba, width=2.5 if nba else 1.5)
     e = era_row(era, "nba", "game_top1_share")
     yr = dict(zip(rows["nba"]["season"].to_list(), rows["nba"]["year"].to_list()))
     for k, (lab, mean) in enumerate(((e["first"], e["first_mean"]),
@@ -125,8 +137,7 @@ def fig_game_top1(ls: pl.DataFrame, era: pl.DataFrame) -> go.Figure:
             hovertemplate=f"NBA {lab}: {pct(mean)}<extra></extra>"))
     f.update_layout(**base_layout(
         "NBA top creators carry slightly less of each game; the WNBA's have not measurably changed"
-        "<br>Top creator's share per game, league mean with 95% band; legend: "
-        "first five seasons to last five",
+        "<br>Top creator's share per game, league mean; legend: first five seasons to last five",
         "Season (starting year)", "Top creator's share (%)"))
     return f
 
