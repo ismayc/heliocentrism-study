@@ -1,0 +1,1345 @@
+<html>
+<head><style>html,body{margin:0;height:100%}
+.js-plotly-plot,.plotly-graph-div{height:auto!important}
+@media (prefers-color-scheme: dark){
+  body:not(.fam-light){background:#1a1a19;color:#c3c2b7}
+  body:not(.fam-light) .controls button{background:#1a1a19;color:#c3c2b7;border-color:#383835}
+  body:not(.fam-light) .controls button.on{background:#3987e5;color:#0f0e0d;border-color:#3987e5}
+  body:not(.fam-light) .seasonlab{color:#f5f3ec}
+}
+body.fam-dark{background:#1a1a19;color:#c3c2b7}
+body.fam-dark .controls button{background:#1a1a19;color:#c3c2b7;border-color:#383835}
+body.fam-dark .controls button.on{background:#3987e5;color:#0f0e0d;border-color:#3987e5}
+body.fam-dark .seasonlab{color:#f5f3ec}</style><meta charset="utf-8" /></head>
+<body>
+    <div style="height:auto; width:100%;">                        <script>window.PlotlyConfig = {MathJaxConfig: 'local'};</script>
+        <script>/* famplot — the family's SVG chart engine.
+ *
+ * Implements the subset of the Plotly API that the studies' figures use
+ * (newPlot / react / relayout / Plots.resize) and renders them as hand-drawn
+ * SVG in the family chart style: thin marks, 4px rounded data-ends, hairline
+ * grids, surface gaps, a dark-chip tooltip, selective direct labels via the
+ * spec's own annotations. Trace types: scatter (lines / markers / bands /
+ * dashed), bar (vertical, horizontal, grouped), histogram. Anything colors:
+ * whatever hexes the spec carries (the page runtime darkens them for dark
+ * scheme before calling react).
+ *
+ * The interactive plotly originals remain available by running each study's
+ * figure scripts on GitHub (python/0*.py -> figures/*.html).
+ */
+(function () {
+  "use strict";
+
+  var NS = "http://www.w3.org/2000/svg";
+
+  function el(tag, attrs, parent) {
+    var n = document.createElementNS(NS, tag);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  /* plotly's write_html packs numeric arrays as {dtype, bdata(, shape)} —
+   * decode them back to plain arrays so the renderer sees numbers. */
+  var DTYPES = { f8: Float64Array, f4: Float32Array, i4: Int32Array,
+                 i2: Int16Array, i1: Int8Array, u4: Uint32Array,
+                 u2: Uint16Array, u1: Uint8Array };
+  function decode(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v) || !v.bdata) return v;
+    var T = DTYPES[v.dtype] || Float64Array;
+    var bin = atob(v.bdata);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var flat = Array.prototype.slice.call(new T(bytes.buffer));
+    var shape = v.shape && String(v.shape).split(",").map(Number);
+    if (shape && shape.length === 2) {
+      var rows = [];
+      for (var r = 0; r < shape[0]; r++) {
+        rows.push(flat.slice(r * shape[1], (r + 1) * shape[1]));
+      }
+      return rows;
+    }
+    return flat;
+  }
+  function decodeTrace(tr) {
+    ["x", "y", "customdata"].forEach(function (k) {
+      if (tr[k] != null) tr[k] = decode(tr[k]);
+    });
+    if (tr.marker) {
+      ["color", "size", "opacity"].forEach(function (k) {
+        if (tr.marker[k] != null) tr.marker[k] = decode(tr.marker[k]);
+      });
+    }
+    ["error_x", "error_y"].forEach(function (k) {
+      var e = tr[k];
+      if (!e) return;
+      ["array", "arrayminus"].forEach(function (a) {
+        if (e[a] != null) e[a] = decode(e[a]);
+      });
+    });
+    return tr;
+  }
+
+  /* Traces without explicit colors take the family categorical order,
+   * assigned by trace index (never re-cycled). Spec-carried colors are
+   * darkened by the page runtime; these engine-side fallbacks pick the
+   * dark steps themselves by checking the theme stamped on the body. */
+  var FAMILY_WAY = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+                    "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
+  var FAMILY_WAY_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500",
+                         "#d55181", "#008300", "#9085e9", "#e66767"];
+  function isDarkDoc() {
+    var b = document.body;
+    if (b && b.classList.contains("fam-dark")) return true;
+    if (b && b.classList.contains("fam-light")) return false;
+    return window.matchMedia &&
+      matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
+  /* Numeric marker colors map through the trace's colorscale. */
+  function hexToRgb(h) {
+    if (h[0] !== "#") return [128, 128, 128];
+    return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16),
+            parseInt(h.slice(5, 7), 16)];
+  }
+  function scaleColor(scale, t) {
+    for (var i = 1; i < scale.length; i++) {
+      if (t <= scale[i][0]) {
+        var a = scale[i - 1], b = scale[i];
+        var f = (t - a[0]) / ((b[0] - a[0]) || 1);
+        var ca = hexToRgb(a[1]), cb = hexToRgb(b[1]);
+        return "rgb(" + ca.map(function (v, j) {
+          return Math.round(v + (cb[j] - v) * f);
+        }).join(",") + ")";
+      }
+    }
+    return scale[scale.length - 1][1];
+  }
+
+  function stripTags(s) {
+    return String(s == null ? "" : s)
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&#8220;|&#8221;/g, '"')
+      .replace(/&#8216;|&#8217;/g, "'")
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&nbsp;/g, " ");
+  }
+
+  /* ---- d3-format-lite: the specifiers the figures actually use ---- */
+  function fmt(spec, v) {
+    if (v == null || typeof v !== "number" || !isFinite(v)) return String(v);
+    if (!spec) {
+      return String(Math.round(v * 1000) / 1000);
+    }
+    var plus = spec.indexOf("+") >= 0;
+    var comma = spec.indexOf(",") >= 0;
+    var m = spec.match(/\.(\d+)([f%])/);
+    var out;
+    if (m && m[2] === "%") {
+      out = (v * 100).toFixed(+m[1]) + "%";
+    } else if (m) {
+      out = v.toFixed(+m[1]);
+      if (comma) out = commas(out);
+    } else if (comma) {
+      out = commas(String(Math.round(v)));
+    } else {
+      out = String(v);
+    }
+    if (plus && v > 0) out = "+" + out;
+    return out;
+  }
+  function commas(s) {
+    var p = s.split(".");
+    p[0] = p[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return p.join(".");
+  }
+
+  /* Fill a hovertemplate for point i of trace tr. */
+  function hover(tr, i, xv, yv) {
+    var t = tr.hovertemplate;
+    if (!t) {
+      var name = tr.name ? tr.name + ": " : "";
+      return name + fmtVal(xv) + ", " + fmtVal(yv);
+    }
+    t = t.replace(/<extra>.*?<\/extra>/g, "");
+    t = t.replace(/%\{([^}]+)\}/g, function (_, expr) {
+      var parts = expr.split(":");
+      var path = parts[0], f = parts.slice(1).join(":");
+      var val;
+      if (path === "x") val = xv;
+      else if (path === "y") val = yv;
+      else if (path === "customdata") {
+        /* A 1-D customdata (one value per point) is referenced whole. */
+        var cd = tr.customdata ? tr.customdata[i] : "";
+        val = Array.isArray(cd) ? cd.join(", ") : (cd == null ? "" : cd);
+      }
+      else if (path.indexOf("customdata[") === 0) {
+        var idx = +path.slice(11, -1);
+        val = tr.customdata && tr.customdata[i] ? tr.customdata[i][idx] : "";
+      } else if (path === "text" || path === "hovertext") {
+        /* Scatter traces carry the point's label in `text` and lead their
+         * template with it ("%{text}<br>xPPS %{x}"). Without this branch it
+         * resolved to "" and every tooltip lost the player's name. */
+        var src = path === "text" ? tr.text : (tr.hovertext || tr.text);
+        val = Array.isArray(src) ? (src[i] == null ? "" : src[i])
+          : (src == null ? "" : src);
+      } else if (path === "fullData.name") val = tr.name || "";
+      else val = "";
+      return typeof val === "number" ? fmt(f, val) : String(val);
+    });
+    return stripTags(t);
+  }
+  function fmtVal(v) {
+    return typeof v === "number" ? fmt(null, v) : String(v);
+  }
+
+  /* Tick labels formatted at the spec's precision can collide (".0%" ticks
+   * every half point read 3%, 3%, 2%, 2%). Add decimals until they differ. */
+  function fmtTicks(spec, vals) {
+    var labs = vals.map(function (v) { return fmt(spec, v); });
+    var m = spec && spec.match(/\.(\d+)([f%])/);
+    for (var extra = 1; m && extra <= 2; extra++) {
+      var uniq = labs.filter(function (s, i) { return labs.indexOf(s) === i; });
+      if (uniq.length === labs.length) break;
+      var s2 = spec.replace(/\.(\d+)([f%])/, "." + (+m[1] + extra) + "$2");
+      labs = vals.map(function (v) { return fmt(s2, v); });
+    }
+    return labs;
+  }
+
+  /* ---- text measurement and wrapping ----
+   * Layout decisions (wrapping, truncation, margins) use the rendered width
+   * of the text, with a per-character estimate when the document cannot
+   * measure (not yet laid out). */
+  var measureNode = null;
+  function textW(s, size, weight) {
+    s = String(s == null ? "" : s);
+    if (!s) return 0;
+    var w = 0;
+    try {
+      if (measureNode && measureNode.ownerSVGElement &&
+          measureNode.ownerSVGElement.isConnected) {
+        measureNode.setAttribute("font-size", size + "px");
+        measureNode.setAttribute("font-weight", weight || "400");
+        measureNode.textContent = s;
+        w = measureNode.getComputedTextLength();
+      }
+    } catch (e) { w = 0; }
+    return w > 0 ? w : s.length * size * 0.56;
+  }
+  function wrapWords(text, maxW, size, weight) {
+    var out = [];
+    String(text).split("\n").forEach(function (para) {
+      var line = "";
+      para.split(" ").forEach(function (word) {
+        var cand = line ? line + " " + word : word;
+        if (line && textW(cand, size, weight) > maxW) {
+          out.push(line); line = word;
+        } else {
+          line = cand;
+        }
+      });
+      if (line) out.push(line);
+    });
+    return out.length ? out : [""];
+  }
+  function fitText(s, maxW, size, weight) {
+    s = String(s);
+    if (textW(s, size, weight) <= maxW) return s;
+    while (s.length > 1 && textW(s + "…", size, weight) > maxW) {
+      s = s.slice(0, -1);
+    }
+    return s.replace(/\s+$/, "") + "…";
+  }
+
+  /* ---- scales ---- */
+  function linScale(d0, d1, r0, r1) {
+    var f = function (v) { return r0 + (v - d0) / (d1 - d0 || 1) * (r1 - r0); };
+    f.d0 = d0; f.d1 = d1;
+    return f;
+  }
+  /* A log axis carries its domain in log10 units (plotly's convention for
+   * `range` on `type:"log"`) while the data stays in linear units, so the
+   * scale takes the log here rather than at every call site. */
+  function log10(v) { return Math.log(v) / Math.LN10; }
+  function logScale(d0, d1, r0, r1) {
+    var f = function (v) {
+      if (!(v > 0)) return NaN;
+      return r0 + (log10(v) - d0) / (d1 - d0 || 1) * (r1 - r0);
+    };
+    f.d0 = d0; f.d1 = d1;
+    return f;
+  }
+  /* Decade ticks, subdivided when the span is short enough to read. Values
+   * come back in data units so the existing formatter labels them 100,
+   * 1,000 rather than 2, 3. */
+  function logTicks(d0, d1) {
+    var lo = Math.floor(Math.min(d0, d1)), hi = Math.ceil(Math.max(d0, d1));
+    var decades = hi - lo;
+    var mant = decades <= 1 ? [1, 2, 3, 5, 7]
+      : decades <= 4 ? [1, 2, 5] : [1];
+    var out = [];
+    for (var e = lo; e <= hi; e++) {
+      for (var i = 0; i < mant.length; i++) {
+        var v = mant[i] * Math.pow(10, e);
+        var l = log10(v);
+        if (l >= Math.min(d0, d1) - 1e-9 && l <= Math.max(d0, d1) + 1e-9) {
+          out.push(v);
+        }
+      }
+    }
+    return out;
+  }
+  function niceTicks(d0, d1, n) {
+    var span = d1 - d0 || 1;
+    var step = Math.pow(10, Math.floor(Math.log(span / n) / Math.LN10));
+    var err = span / n / step;
+    if (err >= 7.5) step *= 10; else if (err >= 3.5) step *= 5;
+    else if (err >= 1.5) step *= 2;
+    var ticks = [];
+    for (var v = Math.ceil(d0 / step) * step; v <= d1 + step / 1e6; v += step) {
+      ticks.push(Math.abs(v) < step / 1e6 ? 0 : Math.round(v * 1e9) / 1e9);
+    }
+    return ticks;
+  }
+
+  /* ---- histogram binning ---- */
+  function binHistogram(tr) {
+    var xs = tr.x.filter(function (v) { return v != null; });
+    var lo = Math.min.apply(null, xs), hi = Math.max.apply(null, xs);
+    var n = tr.nbinsx || Math.ceil(Math.sqrt(xs.length));
+    var step = (hi - lo) / n || 1;
+    var counts = new Array(n).fill(0);
+    xs.forEach(function (v) {
+      var b = Math.min(n - 1, Math.floor((v - lo) / step));
+      counts[b] += 1;
+    });
+    var total = xs.length;
+    return counts.map(function (c, i) {
+      return { x: lo + (i + 0.5) * step, w: step,
+               y: tr.histnorm === "probability" ? c / total : c };
+    });
+  }
+
+  /* ---- tooltip (one per document) ---- */
+  var tip = null;
+  function ensureTip() {
+    if (tip) return tip;
+    tip = document.createElement("div");
+    tip.className = "famplot-tip";
+    var st = document.createElement("style");
+    st.textContent =
+      ".famplot-tip{position:fixed;z-index:30;pointer-events:none;" +
+      "background:#262521;color:#f5f3ec;border-radius:6px;" +
+      "padding:.4rem .6rem;font:12.5px/1.45 system-ui,-apple-system," +
+      "'Segoe UI',sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.28);" +
+      "opacity:0;max-width:260px;white-space:pre-line}" +
+      ".famplot-tip.on{opacity:1}" +
+      "body.fam-dark .famplot-tip{background:#f5f3ec;color:#161512}";
+    document.head.appendChild(st);
+    document.body.appendChild(tip);
+    return tip;
+  }
+  function showTip(evt, text) {
+    var t = ensureTip();
+    t.textContent = text;
+    t.classList.add("on");
+    var pad = 12;
+    var x = evt.clientX + pad, y = evt.clientY + pad;
+    var r = t.getBoundingClientRect();
+    if (x + r.width > innerWidth - 6) x = evt.clientX - r.width - pad;
+    if (y + r.height > innerHeight - 6) y = evt.clientY - r.height - pad;
+    t.style.left = x + "px"; t.style.top = y + "px";
+  }
+  function hideTip() { if (tip) tip.classList.remove("on"); }
+
+  /* Tell the embedding page how tall this figure really is (the chart's
+   * height depends on the frame's width, and controls can sit above it), so
+   * the frame fits it instead of clipping or leaving a gap. */
+  var heightTimer = null;
+  function postHeight() {
+    if (window.parent === window) return;
+    clearTimeout(heightTimer);
+    heightTimer = setTimeout(function () {
+      var bottom = 0;
+      Array.prototype.forEach.call(document.querySelectorAll("svg"),
+        function (s) {
+          var r = s.getBoundingClientRect();
+          bottom = Math.max(bottom, r.bottom + (window.scrollY || 0));
+        });
+      if (bottom > 0) {
+        try { window.parent.postMessage({ famHeight: Math.ceil(bottom) }, "*"); }
+        catch (e) {}
+      }
+    }, 30);
+  }
+
+  /* ---- the renderer ---- */
+  function render(gd) {
+    var data = gd.data || [], layout = gd.layout || {};
+    gd.textContent = "";
+    var W = gd.clientWidth || layout.width || 700;
+    var H = layout.height || 480;
+    var mobile = W < 640;
+    // Category-row charts keep their height (rows must stay readable);
+    // x-y charts scale down with the viewport.
+    var hasHBars = data.some(function (tr) {
+      return tr.type === "bar" && tr.orientation === "h" &&
+        tr.visible !== false;
+    });
+    if (W < 560 && !hasHBars) H = Math.max(300, Math.round(H * (W / 560)));
+    var mg = layout.margin || {};
+    var M = { l: mg.l != null ? mg.l : 60, r: mg.r != null ? mg.r : 30,
+              t: mg.t != null ? mg.t : 60, b: mg.b != null ? mg.b : 50 };
+    if (W < 700 && M.r > 40) M.r = 24;
+    if (mobile && M.l > 108) M.l = 108;
+    var fontCol = (layout.font && layout.font.color) || "#52514e";
+    var titleCol = (layout.title && layout.title.font &&
+                    layout.title.font.color) || fontCol;
+    var XA = layout.xaxis || {}, YA = layout.yaxis || {};
+    var grid = XA.gridcolor || YA.gridcolor || "#e1e0d9";
+    var axline = XA.linecolor || YA.linecolor || "#c3c2b7";
+
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, width: "100%",
+                          role: "img" }, gd);
+    svg.style.display = "block";
+    svg.style.fontFamily = (layout.font && layout.font.family) ||
+      "system-ui, -apple-system, 'Segoe UI', sans-serif";
+    var bgRect = el("rect", { x: 0, y: 0, width: W, height: H,
+                 fill: layout.paper_bgcolor || "#fcfcfb" }, svg);
+    measureNode = el("text", { x: -9999, y: -9999, "aria-hidden": "true" },
+                     svg);
+
+    /* title: wrap to the actual width so narrow screens never clip it. The
+     * first paragraph is the title (bold on every wrapped line); a <br>
+     * starts the subtitle, set regular. */
+    var titleText = stripTags(layout.title && layout.title.text);
+    var titleEnd = 4;
+    if (titleText) {
+      var tfs = mobile ? 13.5 : 15;
+      var tl = [];
+      titleText.split("\n").forEach(function (para, pi) {
+        wrapWords(para, W - M.l - 12, tfs, pi === 0 ? "600" : "400")
+          .forEach(function (s) { tl.push({ s: s, sub: pi > 0 }); });
+      });
+      tl.forEach(function (ln, i) {
+        var tt = el("text", { x: M.l, y: 22 + i * (tfs + 4),
+          fill: ln.sub ? fontCol : titleCol, "font-size": tfs + "px",
+          "font-weight": ln.sub ? "400" : "600" }, svg);
+        tt.textContent = ln.s;
+      });
+      titleEnd = 22 + (tl.length - 1) * (tfs + 4) + 6;
+      var needT = 30 + tl.length * (tfs + 4);
+      if (M.t < needT) M.t = needT;
+    }
+
+    /* ---- assemble series geometry ---- */
+    var tIdx = new Map();
+    data.forEach(function (tr, i) { tIdx.set(tr, i); });
+    function traceColor(tr) {
+      if (tr.line && tr.line.color) return tr.line.color;
+      if (tr.marker && typeof tr.marker.color === "string") {
+        return tr.marker.color;
+      }
+      var way = isDarkDoc() ? FAMILY_WAY_DARK : FAMILY_WAY;
+      return way[(tIdx.get(tr) || 0) % way.length];
+    }
+    /* Per-bar literal colors (an earlier/exposed split, a highlight). */
+    function barColor(tr, i) {
+      var mc = tr.marker && tr.marker.color;
+      if (Array.isArray(mc) && typeof mc[i] === "string") return mc[i];
+      return traceColor(tr);
+    }
+    var bars = [], hbars = [], lines = [], points = [], bands = [];
+    var catX = XA.type === "category";
+    var catY = YA.type === "category";
+    var xCats = [], yCats = [];
+    var prevScatter = null;
+    data.forEach(function (tr) {
+      if (tr.visible === false) return;
+      var type = tr.type || "scatter";
+      if (type === "histogram") {
+        binHistogram(tr).forEach(function (b) {
+          bars.push({ tr: tr, x: b.x, y: b.y, w: b.w, i: -1 });
+        });
+      } else if (type === "bar" && tr.orientation === "h") {
+        (tr.y || []).forEach(function (yv, i) {
+          yCats.indexOf(yv) < 0 && yCats.push(yv);
+          hbars.push({ tr: tr, cat: yv, v: tr.x[i], i: i });
+        });
+      } else if (type === "bar") {
+        (tr.x || []).forEach(function (xv, i) {
+          if (catX || typeof xv === "string") {
+            xCats.indexOf(xv) < 0 && xCats.push(xv);
+          }
+          bars.push({ tr: tr, x: xv, y: tr.y[i], i: i });
+        });
+      } else { /* scatter */
+        var mode = tr.mode || "lines";
+        if (tr.fill === "toself") {
+          bands.push({ tr: tr, xs: tr.x, ys: tr.y });
+        } else if (tr.fill === "tonexty") {
+          /* plotly fills to the previous scatter trace (a percentile band
+           * is drawn as lower bound, then upper bound with tonexty); only
+           * the first trace has nothing before it and fills to the axis. */
+          bands.push({ tr: tr, xs: tr.x, ys: tr.y, tonext: true,
+                       prev: prevScatter });
+          if (mode.indexOf("lines") >= 0 &&
+              !(tr.line && tr.line.width === 0)) lines.push(tr);
+        } else {
+          if (mode.indexOf("lines") >= 0) lines.push(tr);
+          if (mode.indexOf("markers") >= 0) {
+            (tr.x || []).forEach(function (xv, i) {
+              if (catX || typeof xv === "string") {
+                xCats.indexOf(xv) < 0 && xCats.push(xv);
+              }
+              /* A dot plot against named rows (players, teams) arrives as a
+               * scatter whose y values are strings; band them like the
+               * horizontal-bar path rather than scaling them as numbers. */
+              var yv = tr.y ? tr.y[i] : null;
+              if (catY || typeof yv === "string") {
+                yCats.indexOf(yv) < 0 && yCats.push(yv);
+              }
+              points.push({ tr: tr, x: xv, y: yv, i: i });
+            });
+          }
+        }
+        prevScatter = tr;
+      }
+    });
+    var barTraces = [];
+    data.forEach(function (tr) {
+      if ((tr.type === "bar" || tr.type === "histogram") &&
+          barTraces.indexOf(tr) < 0) barTraces.push(tr);
+    });
+
+    /* ---- domains ---- */
+    function extent(vals, pad, zero) {
+      var lo = Infinity, hi = -Infinity;
+      vals.forEach(function (v) {
+        if (typeof v === "number" && isFinite(v)) {
+          if (v < lo) lo = v; if (v > hi) hi = v;
+        }
+      });
+      if (lo === Infinity) { lo = 0; hi = 1; }
+      if (zero && lo > 0) lo = 0;
+      if (zero && hi < 0) hi = 0;
+      var span = (hi - lo) || Math.abs(hi) || 1;
+      return [lo - (zero && lo === 0 ? 0 : span * pad), hi + span * pad];
+    }
+    var xs = [], ys = [];
+    bands.forEach(function (b) { xs = xs.concat(b.xs); ys = ys.concat(b.ys); });
+    lines.forEach(function (tr) { xs = xs.concat(tr.x); ys = ys.concat(tr.y); });
+    /* Error bars widen the axis they run along: a CI whisker that reaches
+     * past the last dot must still land inside the plotting surface. */
+    function errSpan(tr, key, v, i) {
+      var e = tr[key];
+      if (!e || e.visible === false ||
+          typeof v !== "number" || !isFinite(v)) return [v];
+      var plus = Array.isArray(e.array) ? e.array[i] : e.array;
+      var minus = e.symmetric === false
+        ? (Array.isArray(e.arrayminus) ? e.arrayminus[i] : e.arrayminus)
+        : plus;
+      if (typeof plus !== "number" || !isFinite(plus)) plus = 0;
+      if (typeof minus !== "number" || !isFinite(minus)) minus = 0;
+      return [v - minus, v + plus];
+    }
+    points.forEach(function (p) {
+      xs = xs.concat(errSpan(p.tr, "error_x", p.x, p.i));
+      ys = ys.concat(errSpan(p.tr, "error_y", p.y, p.i));
+    });
+    bars.forEach(function (b) {
+      if (typeof b.x === "number") { xs.push(b.x - (b.w || 1) / 2); xs.push(b.x + (b.w || 1) / 2); }
+      ys.push(b.y);
+    });
+    hbars.forEach(function (b) { xs.push(b.v); });
+
+    var zeroY = bars.length > 0, zeroX = hbars.length > 0;
+    /* On a log axis the domain lives in log10 units, so the extent is taken
+     * over the logged values. Non-positive values have no place on one and
+     * drop out rather than poisoning the range. */
+    var logX = XA.type === "log", logY = YA.type === "log";
+    function logged(vals) {
+      var out = [];
+      vals.forEach(function (v) {
+        if (typeof v === "number" && isFinite(v) && v > 0) out.push(log10(v));
+      });
+      return out;
+    }
+    var xd = XA.range ? XA.range.slice()
+      : logX ? extent(logged(xs), 0.04, false) : extent(xs, 0.04, zeroX);
+    var yd = YA.range ? YA.range.slice()
+      : logY ? extent(logged(ys), 0.06, false) : extent(ys, 0.06, zeroY);
+
+    var usingXCats = xCats.length > 0 && (bars.length || points.length);
+    var usingYCats = yCats.length > 0;
+
+    /* ---- layout planning ----
+     * Row labels, legend rows, wrapped tick labels and wrapped axis titles
+     * claim their room before the plot area is fixed, so on a phone nothing
+     * overprints a neighbor or runs off the edge. Growth at the top or
+     * bottom adds to the figure height (the page sizes each frame to it)
+     * rather than squeezing the plot. */
+    var xt = stripTags(XA.title && XA.title.text);
+    var yt = stripTags(YA.title && YA.title.text);
+    var yCatSize = (YA.tickfont && YA.tickfont.size) || 11.5;
+    if (usingYCats) {
+      var widest = Math.max.apply(null, yCats.map(function (c) {
+        return textW(stripTags(c), yCatSize);
+      }));
+      var needL = 14 + widest + (yt ? 18 : 0);
+      var capL = W * (mobile ? 0.42 : 0.3);
+      if (M.l < needL) M.l = Math.round(Math.min(needL, Math.max(M.l, capL)));
+    }
+
+    /* Direct labels at a line's right end live in the right margin. On a
+     * narrow screen that margin is cut to 24px, so size it to the widest
+     * end label instead (capped), or the label prints across its line. */
+    if (W < 700 && mg.r != null && mg.r > 40) {
+      var needR = 0, lastCat = xCats[xCats.length - 1];
+      (layout.annotations || []).forEach(function (an) {
+        if (/domain|paper/.test(an.xref || "")) return;
+        if (an.xanchor && an.xanchor !== "left") return;
+        var atEnd = typeof an.x === "number"
+          ? an.x >= xd[1] - 0.12 * (xd[1] - xd[0])
+          : an.x === lastCat;
+        if (!atEnd) return;
+        var size = (an.font && an.font.size) || 11.5;
+        var widestLine = Math.max.apply(null,
+          stripTags(an.text).split("\n").map(function (s) {
+            return textW(s, size);
+          }));
+        needR = Math.max(needR, (an.xshift || 0) + widestLine + 8);
+      });
+      if (needR > M.r) M.r = Math.round(Math.min(needR, W * 0.32));
+    }
+
+    var legendTraces = data.filter(function (tr) {
+      return tr.name && tr.showlegend !== false &&
+        (layout.showlegend !== false || tr.showlegend === true);
+    });
+    if (layout.showlegend === false) legendTraces = [];
+    var legendItems = [], legendRows = 0, legendBase = 0;
+    if (legendTraces.length > 1) {
+      var lxp = M.l, lrow = 0;
+      legendTraces.forEach(function (tr) {
+        var name = fitText(stripTags(tr.name), W - M.l - 8 - 21, 12);
+        var w = 21 + textW(name, 12);
+        if (lxp > M.l && lxp + w > W - 8) { lxp = M.l; lrow += 1; }
+        legendItems.push({ tr: tr, name: name, x: lxp, row: lrow });
+        lxp += w + 16;
+      });
+      legendRows = lrow + 1;
+      legendBase = Math.max(titleEnd + 14, M.t - 12 - (legendRows - 1) * 16);
+      var needTop = legendBase + (legendRows - 1) * 16 + 14;
+      if (M.t < needTop) { H += needTop - M.t; M.t = needTop; }
+    }
+
+    var pw = W - M.l - M.r;
+    var xTickSize = usingXCats ? 11 : 12;
+    var xTicks = null, tickLines = 1;
+    var useTickText = !usingXCats && !logX && XA.tickvals && XA.ticktext;
+    if (usingXCats || useTickText) {
+      var raw = [];
+      if (usingXCats) {
+        var tv = XA.tickvals;
+        xCats.forEach(function (c, i) {
+          if (tv && tv.indexOf(c) < 0) return;
+          var lab = tv && XA.ticktext ? XA.ticktext[tv.indexOf(c)] : c;
+          raw.push({ v: c, px: (i + 0.5) * pw / xCats.length,
+                     lab: stripTags(lab) });
+        });
+      } else {
+        var xlo = Math.min(xd[0], xd[1]), xhi = Math.max(xd[0], xd[1]);
+        XA.tickvals.forEach(function (v, i) {
+          if (v < xlo || v > xhi) return;
+          raw.push({ v: v, px: (v - xd[0]) / ((xd[1] - xd[0]) || 1) * pw,
+                     lab: stripTags(XA.ticktext[i]) });
+        });
+      }
+      var gap = pw;
+      for (var k = 1; k < raw.length; k++) {
+        gap = Math.min(gap, Math.abs(raw[k].px - raw[k - 1].px));
+      }
+      /* Keep every label when it can wrap into its slot (up to four lines
+       * for a handful of named groups, three otherwise), stepping the font
+       * down once; only then thin to every n-th label. Dropping a group's
+       * name loses information, a long time axis loses nothing. */
+      var maxLines = raw.length <= 8 ? 4 : 3;
+      var sizes = raw.length <= 8 ? [xTickSize, xTickSize - 1, xTickSize - 1.5]
+        : [xTickSize, xTickSize - 1];
+      var done = false;
+      for (var every = 1; !done; every++) {
+        for (var si = 0; si < sizes.length && !done; si++) {
+          var sz = sizes[si], slot = gap * every - 6, fits = true, most = 1;
+          var planned = raw.filter(function (_, i) { return i % every === 0; })
+            .map(function (t) {
+              var ls = wrapWords(t.lab, slot, sz);
+              ls.forEach(function (s) {
+                if (textW(s, sz) > slot + 2) fits = false;
+              });
+              if (ls.length > maxLines) fits = false;
+              most = Math.max(most, ls.length);
+              return { v: t.v, lines: ls };
+            });
+          if (fits || every >= raw.length) {
+            xTicks = planned; tickLines = most; xTickSize = sz; done = true;
+          }
+        }
+      }
+    }
+    var xtLines = xt ? wrapWords(xt, W - 16, 12) : [];
+    var needB = 18 + (tickLines - 1) * 13 +
+      (xtLines.length ? 12 + xtLines.length * 14 : 8);
+    if (M.b < needB) { H += needB - M.b; M.b = needB; }
+    var ph = H - M.t - M.b;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    bgRect.setAttribute("height", H);
+    var plot = el("g", {}, svg);
+    /* Plotly puts the first category at the BOTTOM of a y axis, and
+     * autorange:"reversed" puts it at the top. Row index 0 is drawn at the
+     * top here, so an un-reversed axis has to be flipped or the ranking
+     * reads upside down. */
+    if (usingYCats && YA.autorange !== "reversed") {
+      yCats = yCats.slice().reverse();
+    }
+    var X, Y, xBand = 0, yBand = 0;
+    if (usingXCats) {
+      xBand = pw / xCats.length;
+      X = function (v) { return M.l + xCats.indexOf(v) * xBand + xBand / 2; };
+    } else {
+      X = (logX ? logScale : linScale)(xd[0], xd[1], M.l, M.l + pw);
+    }
+    if (usingYCats) {
+      yBand = ph / yCats.length;
+      Y = function (v) { return M.t + yCats.indexOf(v) * yBand + yBand / 2; };
+    } else {
+      Y = (logY ? logScale : linScale)(yd[0], yd[1], M.t + ph, M.t);
+    }
+
+    /* ---- grid + ticks ---- */
+    var tickCls = { fill: XA.tickfont && XA.tickfont.size
+      ? fontCol : fontCol };
+    function tickText(x, y, s, anchor, size) {
+      var t = el("text", { x: x, y: y, fill: fontCol,
+        "font-size": (size || 12) + "px", "text-anchor": anchor }, svg);
+      t.textContent = s;
+      return t;
+    }
+    if (!usingYCats) {
+      var yTickVals = (logY ? logTicks(yd[0], yd[1])
+        : niceTicks(yd[0], yd[1], Math.max(3, Math.round(ph / 70))))
+        .filter(function (v) {
+          var y = Y(v);
+          return y >= M.t - 1 && y <= M.t + ph + 1;
+        });
+      var yLabs = fmtTicks(YA.tickformat, yTickVals);
+      yTickVals.forEach(function (v, i) {
+        var y = Y(v);
+        el("line", { x1: M.l, y1: y, x2: M.l + pw, y2: y,
+                     stroke: grid, "stroke-width": 1 }, plot);
+        tickText(M.l - 8, y + 4, yLabs[i], "end");
+      });
+    } else {
+      var rowRoom = M.l - 12 - (yt ? 18 : 0);
+      yCats.forEach(function (c) {
+        var lab = stripTags(c);
+        // a row with room for two lines wraps rather than truncating
+        var s2 = yCatSize - 1;
+        if (textW(lab, yCatSize) > rowRoom && yBand >= 2 * s2 + 1) {
+          var two = wrapWords(lab, rowRoom, s2);
+          if (two.length > 2) {
+            two = [two[0], fitText(two.slice(1).join(" "), rowRoom, s2)];
+          }
+          if (two.length === 2) {
+            tickText(M.l - 8, Y(c) - 1.5, two[0], "end", s2);
+            tickText(M.l - 8, Y(c) - 1.5 + s2 + 1, two[1], "end", s2);
+            return;
+          }
+        }
+        tickText(M.l - 8, Y(c) + 3.5, fitText(lab, rowRoom, yCatSize),
+                 "end", yCatSize);
+      });
+    }
+    if (xTicks) {
+      xTicks.forEach(function (t) {
+        var x = X(t.v);
+        if (!usingXCats && (x < M.l - 1 || x > M.l + pw + 1)) return;
+        if (!usingXCats && (hbars.length || usingYCats)) {
+          el("line", { x1: x, y1: M.t, x2: x, y2: M.t + ph,
+                       stroke: grid, "stroke-width": 1 }, plot);
+        }
+        // keep the outermost labels inside the frame
+        var half = Math.max.apply(null, t.lines.map(function (s) {
+          return textW(s, xTickSize);
+        })) / 2;
+        var cxl = Math.min(Math.max(x, half + 4), W - half - 4);
+        t.lines.forEach(function (s, i) {
+          tickText(cxl, M.t + ph + 18 + i * 13, s, "middle", xTickSize);
+        });
+      });
+    } else {
+      var xTickVals = (logX ? logTicks(xd[0], xd[1])
+        : niceTicks(xd[0], xd[1], Math.max(3, Math.round(pw / 90))))
+        .filter(function (v) {
+          var x = X(v);
+          return x >= M.l - 1 && x <= M.l + pw + 1;
+        });
+      var xLabs = fmtTicks(XA.tickformat, xTickVals);
+      xTickVals.forEach(function (v, i) {
+        var x = X(v);
+        if (hbars.length || usingYCats) {
+          el("line", { x1: x, y1: M.t, x2: x, y2: M.t + ph,
+                       stroke: grid, "stroke-width": 1 }, plot);
+        }
+        tickText(x, M.t + ph + 18, xLabs[i], "middle");
+      });
+    }
+    el("line", { x1: M.l, y1: M.t + ph, x2: M.l + pw, y2: M.t + ph,
+                 stroke: axline, "stroke-width": 1 }, plot);
+    if (hbars.length || usingYCats ||
+        (!usingXCats && xd[0] < 0 && xd[1] > 0)) {
+      el("line", { x1: M.l, y1: M.t, x2: M.l, y2: M.t + ph,
+                   stroke: axline, "stroke-width": 1 }, plot);
+    }
+
+    /* axis titles */
+    xtLines.forEach(function (s, i) {
+      var cxt = Math.min(Math.max(M.l + pw / 2, textW(s, 12) / 2 + 4),
+                         W - textW(s, 12) / 2 - 4);
+      tickText(cxt, H - 10 - (xtLines.length - 1 - i) * 14, s, "middle");
+    });
+    if (yt) {
+      var ty = el("text", { x: 0, y: 0, fill: fontCol, "font-size": "12px",
+        "text-anchor": "middle",
+        transform: "translate(14," + (M.t + ph / 2) + ") rotate(-90)" }, svg);
+      ty.textContent = fitText(yt,
+        2 * Math.min(M.t + ph / 2, H - M.t - ph / 2) - 8, 12);
+    }
+
+    var surface = layout.plot_bgcolor || layout.paper_bgcolor || "#fcfcfb";
+
+    /* ---- bands (confidence fills) ---- */
+    bands.forEach(function (b) {
+      var d = "";
+      b.xs.forEach(function (xv, i) {
+        d += (i ? "L" : "M") + X(xv) + "," + Y(b.ys[i]);
+      });
+      if (b.tonext && b.prev && b.prev.x && b.prev.y) {
+        for (var j = b.prev.x.length - 1; j >= 0; j--) {
+          if (b.prev.y[j] == null) continue;
+          d += "L" + X(b.prev.x[j]) + "," + Y(b.prev.y[j]);
+        }
+      } else if (b.tonext) {
+        d += "L" + X(b.xs[b.xs.length - 1]) + "," + (M.t + ph) +
+             "L" + X(b.xs[0]) + "," + (M.t + ph);
+      }
+      el("path", { d: d + "Z", fill: b.tr.fillcolor ||
+        "rgba(42,120,214,0.15)", stroke: "none" }, plot);
+    });
+
+    /* Value labels on a bar. Only bars: on a scatter, `text` is the hover
+     * payload unless the mode explicitly asks for "text", and drawing it
+     * would stamp 450 player names across a scatterplot. */
+    function barLabel(tr, i, cx, top, value, room) {
+      if (!tr.text || tr.textposition === "none") return;
+      var lab = Array.isArray(tr.text) ? tr.text[i] : tr.text;
+      if (lab == null || lab === "") return;
+      var tf = tr.textfont || {};
+      var size = tf.size || 11;
+      // shrink to the bar's slot so neighbors never overprint; drop the
+      // label when even 8.5px will not fit
+      if (room) {
+        while (size > 8.5 && textW(stripTags(lab), size) > room) size -= 0.5;
+        if (textW(stripTags(lab), size) > room) return;
+      }
+      var inside = tr.textposition === "inside";
+      var t = el("text", {
+        x: cx, y: inside ? top + size + 4 : top - 5,
+        fill: tf.color || fontCol, "font-size": size + "px",
+        "text-anchor": "middle"
+      }, svg);
+      t.textContent = stripTags(lab);
+      return t;
+    }
+
+    /* The same, past the end of a horizontal bar. */
+    function hbarLabel(tr, i, endX, midY) {
+      if (!tr.text || tr.textposition === "none") return;
+      var lab = Array.isArray(tr.text) ? tr.text[i] : tr.text;
+      if (lab == null || lab === "") return;
+      var tf = tr.textfont || {};
+      var size = tf.size || 11;
+      var inside = tr.textposition === "inside";
+      var t = el("text", {
+        x: inside ? endX - 6 : endX + 6, y: midY + size * 0.35,
+        fill: tf.color || fontCol, "font-size": size + "px",
+        "text-anchor": inside ? "end" : "start"
+      }, svg);
+      t.textContent = stripTags(lab);
+      return t;
+    }
+
+    /* ---- vertical bars (incl. histogram, grouped) ---- */
+    if (bars.length) {
+      var groups = barTraces.filter(function (t) {
+        return bars.some(function (b) { return b.tr === t; });
+      });
+      var gN = layout.barmode === "group" ? groups.length : 1;
+      bars.forEach(function (b) {
+        var slot = usingXCats ? xBand
+          : (b.w ? X(b.w) - X(0) : pw / Math.max(bars.length / gN, 1));
+        var bw = Math.min(24, (slot - 2) / gN - (gN > 1 ? 2 : 0));
+        if (bw < 1) bw = Math.max(1, slot / gN - 1);
+        var gi = gN > 1 ? groups.indexOf(b.tr) : 0;
+        var cx = X(b.x) - (gN * bw + (gN - 1) * 2) / 2 + gi * (bw + 2);
+        var y0 = Y(Math.max(0, yd[0])), y1 = Y(b.y);
+        var top = Math.min(y0, y1), hgt = Math.abs(y0 - y1);
+        var r = Math.min(4, bw / 2, hgt);
+        var dPath = "M" + cx + "," + (top + hgt) +
+          "V" + (top + r) +
+          "Q" + cx + "," + top + " " + (cx + r) + "," + top +
+          "H" + (cx + bw - r) +
+          "Q" + (cx + bw) + "," + top + " " + (cx + bw) + "," + (top + r) +
+          "V" + (top + hgt) + "Z";
+        var node = el("path", { d: dPath, fill: barColor(b.tr, b.i) }, plot);
+        attachHover(node, b.tr, b.i, b.x, b.y);
+        barLabel(b.tr, b.i, cx + bw / 2, top, b.y,
+                 Math.max(bw, slot / gN) - 4);
+      });
+    }
+
+    /* ---- horizontal bars (grouped like the vertical path) ---- */
+    var hGroups = barTraces.filter(function (t) {
+      return hbars.some(function (b) { return b.tr === t; });
+    });
+    var hN = layout.barmode === "group" ? hGroups.length : 1;
+    hbars.forEach(function (b) {
+      var bh = Math.min(24, (yBand - 8 - (hN - 1) * 2) / hN);
+      var gi = hN > 1 ? hGroups.indexOf(b.tr) : 0;
+      var cy = b.cat == null ? 0
+        : Y(b.cat) - (hN * bh + (hN - 1) * 2) / 2 + gi * (bh + 2);
+      var x0 = X(Math.max(0, xd[0])), x1 = X(b.v);
+      var left = Math.min(x0, x1), wid = Math.abs(x1 - x0);
+      var r = Math.min(4, bh / 2, wid);
+      var dPath = "M" + left + "," + cy +
+        "H" + (left + wid - r) +
+        "Q" + (left + wid) + "," + cy + " " + (left + wid) + "," + (cy + r) +
+        "V" + (cy + bh - r) +
+        "Q" + (left + wid) + "," + (cy + bh) + " " + (left + wid - r) + "," + (cy + bh) +
+        "H" + left + "Z";
+      var node = el("path", { d: dPath, fill: barColor(b.tr, b.i) }, plot);
+      attachHover(node, b.tr, b.i, b.v, b.cat, true);
+      hbarLabel(b.tr, b.i, left + wid, cy + bh / 2);
+    });
+
+    /* ---- lines ---- */
+    var linePts = [];
+    lines.forEach(function (tr) {
+      var d = "";
+      (tr.x || []).forEach(function (xv, i) {
+        var yv = tr.y[i];
+        if (yv == null) return;
+        d += (d ? "L" : "M") + X(xv) + "," + Y(yv);
+        linePts.push({ tr: tr, x: xv, y: yv, px: X(xv), py: Y(yv), i: i });
+      });
+      var ln = tr.line || {};
+      el("path", { d: d, fill: "none", stroke: ln.color || traceColor(tr),
+        "stroke-width": ln.width != null ? ln.width : 2,
+        "stroke-linejoin": "round", "stroke-linecap": "round",
+        "stroke-dasharray": ln.dash === "dot" ? "2,4"
+          : ln.dash === "dash" ? "7,4" : "none" }, plot);
+    });
+
+    /* ---- error bars (drawn under the markers they belong to) ---- */
+    points.forEach(function (p) {
+      if (p.y == null) return;
+      ["error_x", "error_y"].forEach(function (key) {
+        var e = p.tr[key];
+        if (!e || e.visible === false) return;
+        var horiz = key === "error_x";
+        var v = horiz ? p.x : p.y;
+        if (typeof v !== "number" || !isFinite(v)) return;
+        var plus = Array.isArray(e.array) ? e.array[p.i] : e.array;
+        var minus = e.symmetric === false
+          ? (Array.isArray(e.arrayminus) ? e.arrayminus[p.i] : e.arrayminus)
+          : plus;
+        if (typeof plus !== "number" || !isFinite(plus)) plus = 0;
+        if (typeof minus !== "number" || !isFinite(minus)) minus = 0;
+        if (!plus && !minus) return;
+        var lo = horiz ? X(v - minus) : Y(v - minus);
+        var hi = horiz ? X(v + plus) : Y(v + plus);
+        var at = horiz ? Y(p.y) : X(p.x);
+        el("line", {
+          x1: horiz ? lo : at, y1: horiz ? at : lo,
+          x2: horiz ? hi : at, y2: horiz ? at : hi,
+          stroke: e.color || axline,
+          "stroke-width": e.thickness != null ? e.thickness : 1,
+          "stroke-linecap": "round"
+        }, plot);
+      });
+    });
+
+    /* ---- markers ---- */
+    points.forEach(function (p) {
+      if (p.y == null) return;
+      var mk = p.tr.marker || {};
+      var msize = Array.isArray(mk.size) ? mk.size[p.i] : mk.size;
+      if (typeof msize !== "number" || !isFinite(msize)) msize = 8;
+      var r = Math.max(3.5, msize / 2);
+      var fill;
+      if (Array.isArray(mk.color) && typeof mk.color[0] === "string") {
+        /* Per-point literal colors (a sign split, a highlight set). */
+        fill = mk.color[p.i] || traceColor(p.tr);
+      } else if (Array.isArray(mk.color)) {
+        var vals = mk.color;
+        var lo = mk.cmin != null ? mk.cmin : Math.min.apply(null, vals);
+        var hi = mk.cmax != null ? mk.cmax : Math.max.apply(null, vals);
+        var tval = (vals[p.i] - lo) / ((hi - lo) || 1);
+        fill = scaleColor(mk.colorscale || [[0, "#cde2fb"], [1, "#0d366b"]],
+                          Math.max(0, Math.min(1, tval)));
+      } else {
+        fill = mk.color || traceColor(p.tr);
+      }
+      el("circle", { cx: X(p.x), cy: Y(p.y), r: r + 2, fill: surface }, plot);
+      var node = el("circle", { cx: X(p.x), cy: Y(p.y), r: r, fill: fill,
+        "fill-opacity": mk.opacity != null ? mk.opacity : 1 }, plot);
+      attachHover(node, p.tr, p.i, p.x, p.y);
+    });
+
+    /* ---- colorbar (numeric marker colors with showscale) ---- */
+    data.forEach(function (tr) {
+      var mk = tr.marker || {};
+      if (!Array.isArray(mk.color) || !mk.showscale || M.r < 60) return;
+      var scale = mk.colorscale || [[0, "#cde2fb"], [1, "#0d366b"]];
+      var vals = mk.color;
+      var lo = mk.cmin != null ? mk.cmin : Math.min.apply(null, vals);
+      var hi = mk.cmax != null ? mk.cmax : Math.max.apply(null, vals);
+      var cbX = W - M.r + 24, cbH = Math.round(ph * 0.7);
+      var cbY = M.t + (ph - cbH) / 2;
+      var gid = "famgrad" + Math.abs((gd.id || "g").split("")
+        .reduce(function (a, c) { return a + c.charCodeAt(0); }, 0));
+      var defs = el("defs", {}, svg);
+      var grad = el("linearGradient",
+        { id: gid, x1: 0, y1: 1, x2: 0, y2: 0 }, defs);
+      scale.forEach(function (st) {
+        el("stop", { offset: (st[0] * 100) + "%", "stop-color": st[1] }, grad);
+      });
+      el("rect", { x: cbX, y: cbY, width: 10, height: cbH, rx: 3,
+                   fill: "url(#" + gid + ")" }, svg);
+      tickText(cbX + 15, cbY + 9, fmt(".2f", hi), "start", 10.5);
+      tickText(cbX + 15, cbY + cbH, fmt(".2f", lo), "start", 10.5);
+      var cbTitle = mk.colorbar && mk.colorbar.title &&
+        stripTags(mk.colorbar.title.text);
+      if (cbTitle) tickText(cbX - 4, cbY - 10, cbTitle, "start", 11);
+    });
+
+    /* ---- shapes (reference lines) ---- */
+    (layout.shapes || []).forEach(function (sh) {
+      if (sh.type !== "line") return;
+      var ln = sh.line || {};
+      var vertical = sh.x0 === sh.x1;
+      var coords;
+      function cx(v, ref) {
+        return /domain|paper/.test(ref || "") ? M.l + pw * v : X(v);
+      }
+      function cy(v, ref) {
+        return /domain|paper/.test(ref || "") ? M.t + ph * (1 - v) : Y(v);
+      }
+      if (vertical) {
+        coords = { x1: cx(sh.x0, sh.xref), x2: cx(sh.x0, sh.xref),
+                   y1: cy(sh.y0, sh.yref), y2: cy(sh.y1, sh.yref) };
+      } else {
+        coords = { x1: cx(sh.x0, sh.xref), x2: cx(sh.x1, sh.xref),
+                   y1: cy(sh.y0, sh.yref), y2: cy(sh.y0, sh.yref) };
+      }
+      coords.stroke = ln.color || axline;
+      coords["stroke-width"] = ln.width != null ? ln.width : 1.5;
+      if (ln.dash) coords["stroke-dasharray"] = "2,4";
+      el("line", coords, plot);
+    });
+
+    /* ---- annotations ---- */
+    (layout.annotations || []).forEach(function (an) {
+      var ax = /domain|paper/.test(an.xref || "")
+        ? M.l + pw * an.x : X(an.x);
+      var ay = an.yref && /domain|paper/.test(an.yref)
+        ? M.t + ph * (1 - an.y) : (an.y != null ? Y(an.y) : M.t + 14);
+      ax += (an.xshift || 0); ay -= (an.yshift || 0);
+      var anchor = an.xanchor === "right" ? "end"
+        : an.xanchor === "center" ? "middle" : "start";
+      /* plotly pads annotation text about 3px off its anchor point; without
+       * it a label anchored on a reference line starts on top of it. */
+      if (anchor === "start") ax += 3;
+      else if (anchor === "end") ax -= 3;
+      var col = (an.font && an.font.color) || fontCol;
+      var size = (an.font && an.font.size) || 11.5;
+      var linesA = stripTags(an.text).split("\n");
+      // Width-aware clamping so annotation text never leaves the svg.
+      var est = Math.max.apply(null, linesA.map(function (s) {
+        return s.length;
+      })) * size * 0.52;
+      if (anchor === "start" && ax + est > W - 8) {
+        anchor = "end";
+        ax = Math.max(ax, Math.min(8 + est, W - 8));
+        /* A direct label at a line's end that no longer fits to its right
+         * flips back over the line; lift it clear of the line instead of
+         * printing across it. */
+        if (!(an.yref && /domain|paper/.test(an.yref))) ay -= size + 1;
+      } else if (anchor === "end" && ax - est < 8) {
+        ax = Math.min(8 + est, W - 8);
+      } else if (anchor === "middle") {
+        if (ax + est / 2 > W - 8) ax = W - 8 - est / 2;
+        if (ax - est / 2 < 8) ax = 8 + est / 2;
+      }
+      if (ax > W - 8) { ax = W - 8; anchor = "end"; }
+      if (ax < 8) { ax = 8; anchor = "start"; }
+      var dy = an.yanchor === "bottom" ? -(linesA.length - 1) * (size + 2) - 4
+        : an.yanchor === "top" ? size : 0;
+      linesA.forEach(function (s, i) {
+        var t = el("text", { x: ax, y: ay + dy + i * (size + 2), fill: col,
+          "font-size": size + "px", "text-anchor": anchor }, svg);
+        t.textContent = s;
+      });
+    });
+
+    /* ---- legend ----
+     * Laid out in the planning pass (rows sit between the title and the
+     * plot). The swatch shows how the series is drawn: a line segment with
+     * its dash for lines, a dot for markers, a block for bars and bands, so
+     * an observed series and its dashed model line read as different. */
+    function bandFill(c) {
+      var m = /rgba\(([^)]+)\)/.exec(c || "");
+      if (!m) return c;
+      var p = m[1].split(",");
+      return "rgba(" + p.slice(0, 3).join(",") + "," +
+        Math.min(1, parseFloat(p[3]) * 3) + ")";
+    }
+    function swatch(tr, x, y) {
+      var kind = tr.type || "scatter", mode = tr.mode || "lines";
+      var c = traceColor(tr);
+      if (kind === "scatter" && (tr.fill === "tonexty" || tr.fill === "toself")) {
+        el("rect", { x: x, y: y - 9, width: 16, height: 10, rx: 2,
+                     fill: bandFill(tr.fillcolor) || c }, svg);
+        return;
+      }
+      if (kind === "scatter") {
+        var ln = tr.line || {};
+        if (mode.indexOf("lines") >= 0 && ln.width !== 0) {
+          el("line", { x1: x, y1: y - 4, x2: x + 16, y2: y - 4, stroke: c,
+            "stroke-width": 2.5, "stroke-linecap": "round",
+            "stroke-dasharray": ln.dash === "dot" ? "2,3.5"
+              : ln.dash === "dash" ? "5,3" : "none" }, svg);
+        }
+        if (mode.indexOf("markers") >= 0) {
+          var mc = tr.marker && tr.marker.color;
+          el("circle", { cx: x + 8, cy: y - 4, r: 4.5,
+            fill: typeof mc === "string" ? mc : c }, svg);
+        }
+        return;
+      }
+      el("rect", { x: x + 2.5, y: y - 9.5, width: 11, height: 11, rx: 3,
+                   fill: barColor(tr, 0) }, svg);
+    }
+    legendItems.forEach(function (it) {
+      var y = legendBase + it.row * 16;
+      swatch(it.tr, it.x, y);
+      var t = el("text", { x: it.x + 21, y: y, fill: fontCol,
+        "font-size": "12px" }, svg);
+      t.textContent = it.name;
+    });
+
+    /* ---- hover plumbing ---- */
+    function attachHover(node, tr, i, xv, yv, horiz) {
+      if (tr.hoverinfo === "skip") return;
+      node.addEventListener("pointermove", function (e) {
+        showTip(e, horiz ? hover(tr, i, xv, yv) : hover(tr, i, xv, yv));
+      });
+      node.addEventListener("pointerleave", hideTip);
+    }
+    if (measureNode && measureNode.parentNode) {
+      measureNode.parentNode.removeChild(measureNode);
+    }
+    measureNode = null;
+    postHeight();
+    if (linePts.length) {
+      svg.addEventListener("pointermove", function (e) {
+        var rect = svg.getBoundingClientRect();
+        var sx = (e.clientX - rect.left) * W / rect.width;
+        var sy = (e.clientY - rect.top) * H / rect.height;
+        var best = null, bd = 30 * 30;
+        linePts.forEach(function (p) {
+          var dd = (p.px - sx) * (p.px - sx) + (p.py - sy) * (p.py - sy);
+          if (dd < bd) { bd = dd; best = p; }
+        });
+        if (best) showTip(e, hover(best.tr, best.i, best.x, best.y));
+        else if (!e.target.closest("path,circle")) hideTip();
+      });
+      svg.addEventListener("pointerleave", hideTip);
+    }
+  }
+
+  /* ---- Plotly-compatible API ---- */
+  function resolve(gd) {
+    return typeof gd === "string" ? document.getElementById(gd) : gd;
+  }
+  var observed = new WeakSet();
+  function plot(gd, data, layout, config) {
+    gd = resolve(gd);
+    gd.data = (data || []).map(decodeTrace);
+    gd.layout = layout || {};
+    gd.config = config || {};
+    gd.classList.add("js-plotly-plot");
+    render(gd);
+    if (!observed.has(gd) && window.ResizeObserver) {
+      observed.add(gd);
+      var pending = null;
+      // Keep a strong reference on the element (an unreferenced observer
+      // can be GC'd) and debounce with setTimeout, which still fires in
+      // offscreen iframes where requestAnimationFrame stalls.
+      gd._famResizeObserver = new ResizeObserver(function () {
+        clearTimeout(pending);
+        pending = setTimeout(function () {
+          if (Math.abs((gd.clientWidth || 0) - gd._famLastW) > 1) {
+            render(gd);
+          }
+        }, 80);
+      });
+      gd._famResizeObserver.observe(gd);
+      // Fallback for environments where observer callbacks are deferred
+      // (offscreen iframes): the frame's own resize event.
+      window.addEventListener("resize", function () {
+        clearTimeout(pending);
+        pending = setTimeout(function () {
+          if (Math.abs((gd.clientWidth || 0) - gd._famLastW) > 1) {
+            render(gd);
+          }
+        }, 120);
+      });
+    }
+    gd._famLastW = gd.clientWidth || 0;
+    return Promise.resolve(gd);
+  }
+  window.Plotly = {
+    newPlot: plot,
+    react: plot,
+    relayout: function (gd, patch) {
+      gd = resolve(gd);
+      for (var k in patch) {
+        if (patch[k] === null) delete gd.layout[k];
+        else gd.layout[k] = patch[k];
+      }
+      render(gd);
+      return Promise.resolve(gd);
+    },
+    Plots: { resize: function (gd) { render(resolve(gd)); } },
+  };
+})();
+</script>                <div id="18634e16-b52b-4e84-89b9-21eaa3e6be09" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("18634e16-b52b-4e84-89b9-21eaa3e6be09")) {                    Plotly.newPlot(                        "18634e16-b52b-4e84-89b9-21eaa3e6be09",                        [{"customdata":[["1996-97","ATL","M. Blaylock"],["1996-97","BOS","D. Wesley"],["1996-97","CLE","T. Brandon"],["1996-97","CHI","M. Jordan"],["1996-97","DAL","D. Harper"],["1996-97","DEN","M. Jackson"],["1996-97","GSW","L. Sprewell"],["1996-97","HOU","C. Drexler"],["1996-97","LAC","D. Martin"],["1996-97","LAL","N. Van Exel"],["1996-97","MIA","T. Hardaway"],["1996-97","MIL","S. Douglas"],["1996-97","MIN","S. Marbury"],["1996-97","NJN","K. Gill"],["1996-97","NYK","C. Childs"],["1996-97","ORL","A. Hardaway"],["1996-97","IND","T. Best"],["1996-97","PHI","A. Iverson"],["1996-97","PHX","K. Johnson"],["1996-97","POR","K. Anderson"],["1996-97","SAC","M. Richmond"],["1996-97","SAS","A. Johnson"],["1996-97","SEA","G. Payton"],["1996-97","TOR","D. Stoudamire"],["1996-97","UTA","J. Stockton"],["1996-97","VAN","G. Anthony"],["1996-97","WAS","R. Strickland"],["1996-97","DET","G. Hill"],["1996-97","CHH","A. Mason"],["1997-98","ATL","M. Blaylock"],["1997-98","BOS","A. Walker"],["1997-98","CLE","B. Knight"],["1997-98","CHI","M. Jordan"],["1997-98","DAL","M. Finley"],["1997-98","DEN","B. Jackson"],["1997-98","GSW","M. Bogues"],["1997-98","HOU","C. Drexler"],["1997-98","LAC","D. Martin"],["1997-98","LAL","N. Van Exel"],["1997-98","MIA","T. Hardaway"],["1997-98","MIL","R. Allen"],["1997-98","MIN","S. Marbury"],["1997-98","NJN","S. Cassell"],["1997-98","NYK","C. Ward"],["1997-98","ORL","M. Price"],["1997-98","IND","M. Jackson"],["1997-98","PHI","A. Iverson"],["1997-98","PHX","J. Kidd"],["1997-98","POR","I. Rider"],["1997-98","SAC","M. Richmond"],["1997-98","SAS","A. Johnson"],["1997-98","SEA","G. Payton"],["1997-98","TOR","D. Stoudamire"],["1997-98","UTA","J. Stockton"],["1997-98","VAN","S. Abdur-Rahim"],["1997-98","WAS","R. Strickland"],["1997-98","DET","G. Hill"],["1997-98","CHH","D. Wesley"],["1998-99","ATL","M. Blaylock"],["1998-99","BOS","K. Anderson"],["1998-99","CLE","B. Knight"],["1998-99","CHI","T. Kukoc"],["1998-99","DAL","M. Finley"],["1998-99","DEN","N. Van Exel"],["1998-99","GSW","J. Starks"],["1998-99","HOU","S. Pippen"],["1998-99","LAC","M. Taylor"],["1998-99","LAL","K. Bryant"],["1998-99","MIA","T. Hardaway"],["1998-99","MIL","R. Allen"],["1998-99","MIN","K. Garnett"],["1998-99","NJN","S. Marbury"],["1998-99","NYK","C. Ward"],["1998-99","ORL","D. Armstrong"],["1998-99","IND","M. Jackson"],["1998-99","PHI","A. Iverson"],["1998-99","PHX","J. Kidd"],["1998-99","POR","D. Stoudamire"],["1998-99","SAC","J. Williams"],["1998-99","SAS","A. Johnson"],["1998-99","SEA","G. Payton"],["1998-99","TOR","V. Carter"],["1998-99","UTA","J. Stockton"],["1998-99","VAN","M. Bibby"],["1998-99","WAS","R. Strickland"],["1998-99","DET","G. Hill"],["1998-99","CHH","D. Wesley"],["1999-00","ATL","J. Terry"],["1999-00","BOS","K. Anderson"],["1999-00","CLE","A. Miller"],["1999-00","CHI","E. Brand"],["1999-00","DAL","M. Finley"],["1999-00","DEN","N. Van Exel"],["1999-00","GSW","M. Blaylock"],["1999-00","HOU","S. Francis"],["1999-00","LAC","L. Odom"],["1999-00","LAL","S. O'Neal"],["1999-00","MIA","T. Hardaway"],["1999-00","MIL","S. Cassell"],["1999-00","MIN","T. Brandon"],["1999-00","NJN","S. Marbury"],["1999-00","NYK","L. Sprewell"],["1999-00","ORL","D. Armstrong"],["1999-00","IND","M. Jackson"],["1999-00","PHI","E. Snow"],["1999-00","PHX","J. Kidd"],["1999-00","POR","D. Stoudamire"],["1999-00","SAC","J. Williams"],["1999-00","SAS","A. Johnson"],["1999-00","SEA","G. Payton"],["1999-00","TOR","V. Carter"],["1999-00","UTA","J. Stockton"],["1999-00","VAN","M. Bibby"],["1999-00","WAS","R. Strickland"],["1999-00","DET","G. Hill"],["1999-00","CHH","D. Wesley"],["2000-01","ATL","J. Terry"],["2000-01","BOS","A. Walker"],["2000-01","CLE","A. Miller"],["2000-01","CHI","E. Brand"],["2000-01","DAL","S. Nash"],["2000-01","DEN","N. Van Exel"],["2000-01","GSW","M. Blaylock"],["2000-01","HOU","S. Francis"],["2000-01","LAC","J. McInnis"],["2000-01","LAL","K. Bryant"],["2000-01","MIA","T. Hardaway"],["2000-01","MIL","S. Cassell"],["2000-01","MIN","T. Brandon"],["2000-01","NJN","S. Marbury"],["2000-01","NYK","L. Sprewell"],["2000-01","ORL","T. McGrady"],["2000-01","IND","T. Best"],["2000-01","PHI","A. Iverson"],["2000-01","PHX","J. Kidd"],["2000-01","POR","D. Stoudamire"],["2000-01","SAC","C. Webber"],["2000-01","SAS","T. Duncan"],["2000-01","SEA","G. Payton"],["2000-01","TOR","V. Carter"],["2000-01","UTA","J. Stockton"],["2000-01","VAN","M. Bibby"],["2000-01","WAS","R. Hamilton"],["2000-01","DET","J. Stackhouse"],["2000-01","CHH","B. Davis"],["2001-02","ATL","J. Terry"],["2001-02","BOS","A. Walker"],["2001-02","CLE","A. Miller"],["2001-02","CHI","J. Rose"],["2001-02","DAL","S. Nash"],["2001-02","DEN","N. Van Exel"],["2001-02","GSW","L. Hughes"],["2001-02","HOU","S. Francis"],["2001-02","LAC","J. McInnis"],["2001-02","LAL","K. Bryant"],["2001-02","MIA","R. Strickland"],["2001-02","MIL","S. Cassell"],["2001-02","MIN","K. Garnett"],["2001-02","NJN","J. Kidd"],["2001-02","NYK","M. Jackson"],["2001-02","ORL","T. McGrady"],["2001-02","IND","J. Tinsley"],["2001-02","PHI","A. Iverson"],["2001-02","PHX","S. Marbury"],["2001-02","POR","D. Stoudamire"],["2001-02","SAC","M. Bibby"],["2001-02","SAS","T. Duncan"],["2001-02","SEA","G. Payton"],["2001-02","TOR","A. Williams"],["2001-02","UTA","J. Stockton"],["2001-02","MEM","J. Williams"],["2001-02","WAS","M. Jordan"],["2001-02","DET","J. Stackhouse"],["2001-02","CHH","B. Davis"],["2002-03","ATL","J. Terry"],["2002-03","BOS","P. Pierce"],["2002-03","CLE","R. Davis"],["2002-03","NOH","J. Mashburn"],["2002-03","CHI","J. Rose"],["2002-03","DAL","S. Nash"],["2002-03","DEN","J. Howard"],["2002-03","GSW","G. Arenas"],["2002-03","HOU","S. Francis"],["2002-03","LAC","A. Miller"],["2002-03","LAL","K. Bryant"],["2002-03","MIA","T. Best"],["2002-03","MIL","S. Cassell"],["2002-03","MIN","K. Garnett"],["2002-03","NJN","J. Kidd"],["2002-03","NYK","H. Eisley"],["2002-03","ORL","T. McGrady"],["2002-03","IND","J. Tinsley"],["2002-03","PHI","A. Iverson"],["2002-03","PHX","S. Marbury"],["2002-03","POR","D. Anderson"],["2002-03","SAC","C. Webber"],["2002-03","SAS","T. Parker"],["2002-03","SEA","G. Payton"],["2002-03","TOR","A. Williams"],["2002-03","UTA","J. Stockton"],["2002-03","MEM","J. Williams"],["2002-03","WAS","M. Jordan"],["2002-03","DET","C. Billups"],["2003-04","ATL","J. Terry"],["2003-04","BOS","P. Pierce"],["2003-04","CLE","L. James"],["2003-04","NOH","B. Davis"],["2003-04","CHI","J. Crawford"],["2003-04","DAL","S. Nash"],["2003-04","DEN","A. Miller"],["2003-04","GSW","J. Richardson"],["2003-04","HOU","S. Francis"],["2003-04","LAC","E. Brand"],["2003-04","LAL","G. Payton"],["2003-04","MIA","L. Odom"],["2003-04","MIL","D. Jones"],["2003-04","MIN","S. Cassell"],["2003-04","NJN","J. Kidd"],["2003-04","NYK","S. Marbury"],["2003-04","ORL","T. McGrady"],["2003-04","IND","M. World Peace"],["2003-04","PHI","E. Snow"],["2003-04","PHX","J. Johnson"],["2003-04","POR","D. Stoudamire"],["2003-04","SAC","M. Bibby"],["2003-04","SAS","T. Parker"],["2003-04","SEA","R. Allen"],["2003-04","TOR","V. Carter"],["2003-04","UTA","C. Arroyo"],["2003-04","MEM","J. Williams"],["2003-04","WAS","G. Arenas"],["2003-04","DET","C. Billups"],["2004-05","ATL","T. Lue"],["2004-05","BOS","G. Payton"],["2004-05","CLE","L. James"],["2004-05","NOH","D. Dickau"],["2004-05","CHI","K. Hinrich"],["2004-05","DAL","J. Terry"],["2004-05","DEN","A. Miller"],["2004-05","GSW","J. Richardson"],["2004-05","HOU","T. McGrady"],["2004-05","LAC","R. Brunson"],["2004-05","LAL","K. Bryant"],["2004-05","MIA","D. Wade"],["2004-05","MIL","M. Williams"],["2004-05","MIN","K. Garnett"],["2004-05","NJN","J. Kidd"],["2004-05","NYK","S. Marbury"],["2004-05","ORL","S. Francis"],["2004-05","IND","A. Johnson"],["2004-05","PHI","A. Iverson"],["2004-05","PHX","S. Nash"],["2004-05","POR","D. Stoudamire"],["2004-05","SAC","M. Bibby"],["2004-05","SAS","T. Parker"],["2004-05","SEA","L. Ridnour"],["2004-05","TOR","R. Alston"],["2004-05","UTA","K. McLeod"],["2004-05","MEM","J. Williams"],["2004-05","WAS","G. Arenas"],["2004-05","DET","C. Billups"],["2004-05","CHA","B. Knight"],["2005-06","ATL","J. Johnson"],["2005-06","BOS","P. Pierce"],["2005-06","CLE","L. James"],["2005-06","NOK","C. Paul"],["2005-06","CHI","K. Hinrich"],["2005-06","DAL","D. Nowitzki"],["2005-06","DEN","A. Miller"],["2005-06","GSW","B. Davis"],["2005-06","HOU","R. Alston"],["2005-06","LAC","S. Cassell"],["2005-06","LAL","K. Bryant"],["2005-06","MIA","D. Wade"],["2005-06","MIL","T. Ford"],["2005-06","MIN","K. Garnett"],["2005-06","NJN","J. Kidd"],["2005-06","NYK","S. Marbury"],["2005-06","ORL","J. Nelson"],["2005-06","IND","A. Johnson"],["2005-06","PHI","A. Iverson"],["2005-06","PHX","S. Nash"],["2005-06","POR","Z. Randolph"],["2005-06","SAC","M. Bibby"],["2005-06","SAS","T. Parker"],["2005-06","SEA","L. Ridnour"],["2005-06","TOR","M. James"],["2005-06","UTA","D. Williams"],["2005-06","MEM","P. Gasol"],["2005-06","WAS","G. Arenas"],["2005-06","DET","C. Billups"],["2005-06","CHA","B. Knight"],["2006-07","ATL","J. Johnson"],["2006-07","BOS","R. Rondo"],["2006-07","CLE","L. James"],["2006-07","NOK","C. Paul"],["2006-07","CHI","K. Hinrich"],["2006-07","DAL","J. Terry"],["2006-07","DEN","A. Iverson"],["2006-07","GSW","B. Davis"],["2006-07","HOU","T. McGrady"],["2006-07","LAC","E. Brand"],["2006-07","LAL","K. Bryant"],["2006-07","MIA","D. Wade"],["2006-07","MIL","M. Williams"],["2006-07","MIN","R. Davis"],["2006-07","NJN","J. Kidd"],["2006-07","NYK","S. Marbury"],["2006-07","ORL","J. Nelson"],["2006-07","IND","J. Tinsley"],["2006-07","PHI","A. Iguodala"],["2006-07","PHX","S. Nash"],["2006-07","POR","J. Jack"],["2006-07","SAC","M. Bibby"],["2006-07","SAS","T. Parker"],["2006-07","SEA","E. Watson"],["2006-07","TOR","T. Ford"],["2006-07","UTA","D. Williams"],["2006-07","MEM","C. Atkins"],["2006-07","WAS","G. Arenas"],["2006-07","DET","C. Billups"],["2006-07","CHA","R. Felton"],["2007-08","ATL","J. Johnson"],["2007-08","BOS","P. Pierce"],["2007-08","CLE","L. James"],["2007-08","NOH","C. Paul"],["2007-08","CHI","K. Hinrich"],["2007-08","DAL","D. Nowitzki"],["2007-08","DEN","A. Iverson"],["2007-08","GSW","B. Davis"],["2007-08","HOU","T. McGrady"],["2007-08","LAC","B. Knight"],["2007-08","LAL","K. Bryant"],["2007-08","MIA","D. Wade"],["2007-08","MIL","M. Williams"],["2007-08","MIN","S. Telfair"],["2007-08","NJN","V. Carter"],["2007-08","NYK","J. Crawford"],["2007-08","ORL","H. Turkoglu"],["2007-08","IND","M. Dunleavy"],["2007-08","PHI","A. Miller"],["2007-08","PHX","S. Nash"],["2007-08","POR","B. Roy"],["2007-08","SAC","B. Udrih"],["2007-08","SAS","T. Parker"],["2007-08","SEA","E. Watson"],["2007-08","TOR","J. Calderon"],["2007-08","UTA","D. Williams"],["2007-08","MEM","R. Gay"],["2007-08","WAS","C. Butler"],["2007-08","DET","C. Billups"],["2007-08","CHA","R. Felton"],["2008-09","ATL","J. Johnson"],["2008-09","BOS","R. Rondo"],["2008-09","CLE","L. James"],["2008-09","NOH","C. Paul"],["2008-09","CHI","D. Rose"],["2008-09","DAL","J. Kidd"],["2008-09","DEN","C. Billups"],["2008-09","GSW","S. Jackson"],["2008-09","HOU","M. World Peace"],["2008-09","LAC","B. Davis"],["2008-09","LAL","K. Bryant"],["2008-09","MIA","D. Wade"],["2008-09","MIL","R. Sessions"],["2008-09","MIN","R. Foye"],["2008-09","NJN","D. Harris"],["2008-09","NYK","C. Duhon"],["2008-09","ORL","H. Turkoglu"],["2008-09","IND","T. Ford"],["2008-09","PHI","A. Miller"],["2008-09","PHX","S. Nash"],["2008-09","POR","B. Roy"],["2008-09","SAC","B. Udrih"],["2008-09","SAS","T. Parker"],["2008-09","OKC","R. Westbrook"],["2008-09","TOR","J. Calderon"],["2008-09","UTA","D. Williams"],["2008-09","MEM","O. Mayo"],["2008-09","WAS","C. Butler"],["2008-09","DET","R. Stuckey"],["2008-09","CHA","R. Felton"],["2009-10","ATL","J. Johnson"],["2009-10","BOS","R. Rondo"],["2009-10","CLE","L. James"],["2009-10","NOH","C. Paul"],["2009-10","CHI","D. Rose"],["2009-10","DAL","J. Kidd"],["2009-10","DEN","C. Billups"],["2009-10","GSW","S. Curry"],["2009-10","HOU","A. Brooks"],["2009-10","LAC","B. Davis"],["2009-10","LAL","K. Bryant"],["2009-10","MIA","D. Wade"],["2009-10","MIL","B. Jennings"],["2009-10","MIN","J. Flynn"],["2009-10","NJN","D. Harris"],["2009-10","NYK","D. Lee"],["2009-10","ORL","J. Nelson"],["2009-10","IND","E. Watson"],["2009-10","PHI","A. Iguodala"],["2009-10","PHX","S. Nash"],["2009-10","POR","A. Miller"],["2009-10","SAC","T. Evans"],["2009-10","SAS","M. Ginobili"],["2009-10","OKC","R. Westbrook"],["2009-10","TOR","J. Jack"],["2009-10","UTA","D. Williams"],["2009-10","MEM","M. Conley"],["2009-10","WAS","R. Foye"],["2009-10","DET","R. Stuckey"],["2009-10","CHA","R. Felton"],["2010-11","ATL","J. Johnson"],["2010-11","BOS","R. Rondo"],["2010-11","CLE","R. Sessions"],["2010-11","NOH","C. Paul"],["2010-11","CHI","D. Rose"],["2010-11","DAL","J. Kidd"],["2010-11","DEN","T. Lawson"],["2010-11","GSW","M. Ellis"],["2010-11","HOU","K. Lowry"],["2010-11","LAC","B. Griffin"],["2010-11","LAL","K. Bryant"],["2010-11","MIA","L. James"],["2010-11","MIL","B. Jennings"],["2010-11","MIN","L. Ridnour"],["2010-11","NJN","D. Harris"],["2010-11","NYK","R. Felton"],["2010-11","ORL","J. Nelson"],["2010-11","IND","D. Collison"],["2010-11","PHI","J. Holiday"],["2010-11","PHX","S. Nash"],["2010-11","POR","A. Miller"],["2010-11","SAC","T. Evans"],["2010-11","SAS","T. Parker"],["2010-11","OKC","R. Westbrook"],["2010-11","TOR","J. Calderon"],["2010-11","UTA","D. Williams"],["2010-11","MEM","M. Conley"],["2010-11","WAS","J. Wall"],["2010-11","DET","R. Stuckey"],["2010-11","CHA","D. Augustin"],["2011-12","ATL","J. Teague"],["2011-12","BOS","R. Rondo"],["2011-12","CLE","K. Irving"],["2011-12","NOH","G. Vasquez"],["2011-12","CHI","D. Rose"],["2011-12","DAL","J. Terry"],["2011-12","DEN","T. Lawson"],["2011-12","GSW","M. Ellis"],["2011-12","HOU","G. Dragic"],["2011-12","LAC","C. Paul"],["2011-12","LAL","K. Bryant"],["2011-12","MIA","L. James"],["2011-12","MIL","B. Jennings"],["2011-12","MIN","R. Rubio"],["2011-12","NJN","D. Williams"],["2011-12","NYK","C. Anthony"],["2011-12","ORL","J. Nelson"],["2011-12","IND","D. Collison"],["2011-12","PHI","J. Holiday"],["2011-12","PHX","S. Nash"],["2011-12","POR","R. Felton"],["2011-12","SAC","T. Evans"],["2011-12","SAS","T. Parker"],["2011-12","OKC","R. Westbrook"],["2011-12","TOR","J. Calderon"],["2011-12","UTA","D. Harris"],["2011-12","MEM","M. Conley"],["2011-12","WAS","J. Wall"],["2011-12","DET","B. Knight"],["2011-12","CHA","K. Walker"],["2012-13","ATL","J. Teague"],["2012-13","BOS","R. Rondo"],["2012-13","CLE","K. Irving"],["2012-13","NOH","G. Vasquez"],["2012-13","CHI","N. Robinson"],["2012-13","DAL","D. Collison"],["2012-13","DEN","T. Lawson"],["2012-13","GSW","S. Curry"],["2012-13","HOU","J. Harden"],["2012-13","LAC","C. Paul"],["2012-13","LAL","K. Bryant"],["2012-13","MIA","L. James"],["2012-13","MIL","B. Jennings"],["2012-13","MIN","R. Rubio"],["2012-13","BKN","D. Williams"],["2012-13","NYK","R. Felton"],["2012-13","ORL","J. Nelson"],["2012-13","IND","G. Hill"],["2012-13","PHI","J. Holiday"],["2012-13","PHX","G. Dragic"],["2012-13","POR","D. Lillard"],["2012-13","SAC","I. Thomas"],["2012-13","SAS","T. Parker"],["2012-13","OKC","R. Westbrook"],["2012-13","TOR","K. Lowry"],["2012-13","UTA","A. Jefferson"],["2012-13","MEM","M. Conley"],["2012-13","WAS","J. Wall"],["2012-13","DET","G. Monroe"],["2012-13","CHA","K. Walker"],["2013-14","ATL","J. Teague"],["2013-14","BOS","R. Rondo"],["2013-14","CLE","K. Irving"],["2013-14","NOP","T. Evans"],["2013-14","CHI","J. Noah"],["2013-14","DAL","M. Ellis"],["2013-14","DEN","T. Lawson"],["2013-14","GSW","S. Curry"],["2013-14","HOU","J. Harden"],["2013-14","LAC","C. Paul"],["2013-14","LAL","K. Marshall"],["2013-14","MIA","L. James"],["2013-14","MIL","B. Knight"],["2013-14","MIN","R. Rubio"],["2013-14","BKN","D. Williams"],["2013-14","NYK","C. Anthony"],["2013-14","ORL","J. Nelson"],["2013-14","IND","L. Stephenson"],["2013-14","PHI","M. Carter-Williams"],["2013-14","PHX","G. Dragic"],["2013-14","POR","D. Lillard"],["2013-14","SAC","I. Thomas"],["2013-14","SAS","T. Parker"],["2013-14","OKC","K. Durant"],["2013-14","TOR","K. Lowry"],["2013-14","UTA","G. Hayward"],["2013-14","MEM","M. Conley"],["2013-14","WAS","J. Wall"],["2013-14","DET","B. Jennings"],["2013-14","CHA","K. Walker"],["2014-15","ATL","J. Teague"],["2014-15","BOS","E. Turner"],["2014-15","CLE","L. James"],["2014-15","NOP","T. Evans"],["2014-15","CHI","A. Brooks"],["2014-15","DAL","M. Ellis"],["2014-15","DEN","T. Lawson"],["2014-15","GSW","S. Curry"],["2014-15","HOU","J. Harden"],["2014-15","LAC","C. Paul"],["2014-15","LAL","J. Lin"],["2014-15","MIA","D. Wade"],["2014-15","MIL","B. Knight"],["2014-15","MIN","Z. LaVine"],["2014-15","BKN","D. Williams"],["2014-15","NYK","S. Larkin"],["2014-15","ORL","E. Payton"],["2014-15","IND","R. Stuckey"],["2014-15","PHI","M. Carter-Williams"],["2014-15","PHX","E. Bledsoe"],["2014-15","POR","D. Lillard"],["2014-15","SAC","R. Gay"],["2014-15","SAS","T. Parker"],["2014-15","OKC","R. Westbrook"],["2014-15","TOR","K. Lowry"],["2014-15","UTA","G. Hayward"],["2014-15","MEM","M. Conley"],["2014-15","WAS","J. Wall"],["2014-15","DET","B. Jennings"],["2014-15","CHA","K. Walker"],["2015-16","ATL","J. Teague"],["2015-16","BOS","I. Thomas"],["2015-16","CLE","L. James"],["2015-16","NOP","J. Holiday"],["2015-16","CHI","D. Rose"],["2015-16","DAL","D. Williams"],["2015-16","DEN","E. Mudiay"],["2015-16","GSW","S. Curry"],["2015-16","HOU","J. Harden"],["2015-16","LAC","C. Paul"],["2015-16","LAL","D. Russell"],["2015-16","MIA","D. Wade"],["2015-16","MIL","G. Antetokounmpo"],["2015-16","MIN","R. Rubio"],["2015-16","BKN","S. Larkin"],["2015-16","NYK","C. Anthony"],["2015-16","ORL","E. Payton"],["2015-16","IND","M. Ellis"],["2015-16","PHI","I. Smith"],["2015-16","PHX","B. Knight"],["2015-16","POR","D. Lillard"],["2015-16","SAC","R. Rondo"],["2015-16","SAS","T. Parker"],["2015-16","OKC","R. Westbrook"],["2015-16","TOR","K. Lowry"],["2015-16","UTA","G. Hayward"],["2015-16","MEM","M. Conley"],["2015-16","WAS","J. Wall"],["2015-16","DET","R. Jackson"],["2015-16","CHA","K. Walker"],["2016-17","ATL","D. Schroder"],["2016-17","BOS","I. Thomas"],["2016-17","CLE","L. James"],["2016-17","NOP","J. Holiday"],["2016-17","CHI","J. Butler"],["2016-17","DAL","D. Williams"],["2016-17","DEN","J. Nelson"],["2016-17","GSW","S. Curry"],["2016-17","HOU","J. Harden"],["2016-17","LAC","C. Paul"],["2016-17","LAL","D. Russell"],["2016-17","MIA","G. Dragic"],["2016-17","MIL","G. Antetokounmpo"],["2016-17","MIN","R. Rubio"],["2016-17","BKN","B. Lopez"],["2016-17","NYK","D. Rose"],["2016-17","ORL","E. Payton"],["2016-17","IND","J. Teague"],["2016-17","PHI","T. McConnell"],["2016-17","PHX","E. Bledsoe"],["2016-17","POR","D. Lillard"],["2016-17","SAC","D. Collison"],["2016-17","SAS","K. Leonard"],["2016-17","OKC","R. Westbrook"],["2016-17","TOR","D. DeRozan"],["2016-17","UTA","G. Hayward"],["2016-17","MEM","M. Conley"],["2016-17","WAS","J. Wall"],["2016-17","DET","I. Smith"],["2016-17","CHA","K. Walker"],["2017-18","ATL","D. Schroder"],["2017-18","BOS","K. Irving"],["2017-18","CLE","L. James"],["2017-18","NOP","J. Holiday"],["2017-18","CHI","K. Dunn"],["2017-18","DAL","D. Smith Jr."],["2017-18","DEN","N. Jokic"],["2017-18","GSW","K. Durant"],["2017-18","HOU","J. Harden"],["2017-18","LAC","L. Williams"],["2017-18","LAL","L. Ball"],["2017-18","MIA","G. Dragic"],["2017-18","MIL","G. Antetokounmpo"],["2017-18","MIN","J. Teague"],["2017-18","BKN","S. Dinwiddie"],["2017-18","NYK","J. Jack"],["2017-18","ORL","E. Payton"],["2017-18","IND","V. Oladipo"],["2017-18","PHI","B. Simmons"],["2017-18","PHX","D. Booker"],["2017-18","POR","D. Lillard"],["2017-18","SAC","D. Fox"],["2017-18","SAS","L. Aldridge"],["2017-18","OKC","R. Westbrook"],["2017-18","TOR","D. DeRozan"],["2017-18","UTA","D. Mitchell"],["2017-18","MEM","T. Evans"],["2017-18","WAS","B. Beal"],["2017-18","DET","I. Smith"],["2017-18","CHA","K. Walker"],["2018-19","ATL","T. Young"],["2018-19","BOS","K. Irving"],["2018-19","CLE","C. Sexton"],["2018-19","NOP","J. Holiday"],["2018-19","CHI","Z. LaVine"],["2018-19","DAL","L. Doncic"],["2018-19","DEN","N. Jokic"],["2018-19","GSW","K. Durant"],["2018-19","HOU","J. Harden"],["2018-19","LAC","L. Williams"],["2018-19","LAL","L. James"],["2018-19","MIA","D. Wade"],["2018-19","MIL","G. Antetokounmpo"],["2018-19","MIN","J. Teague"],["2018-19","BKN","D. Russell"],["2018-19","NYK","E. Mudiay"],["2018-19","ORL","D. Augustin"],["2018-19","IND","D. Collison"],["2018-19","PHI","B. Simmons"],["2018-19","PHX","D. Booker"],["2018-19","POR","D. Lillard"],["2018-19","SAC","D. Fox"],["2018-19","SAS","D. DeRozan"],["2018-19","OKC","R. Westbrook"],["2018-19","TOR","K. Lowry"],["2018-19","UTA","D. Mitchell"],["2018-19","MEM","M. Conley"],["2018-19","WAS","B. Beal"],["2018-19","DET","B. Griffin"],["2018-19","CHA","K. Walker"],["2019-20","ATL","T. Young"],["2019-20","BOS","K. Walker"],["2019-20","CLE","C. Sexton"],["2019-20","NOP","J. Holiday"],["2019-20","CHI","Z. LaVine"],["2019-20","DAL","L. Doncic"],["2019-20","DEN","N. Jokic"],["2019-20","GSW","D. Russell"],["2019-20","HOU","J. Harden"],["2019-20","LAC","L. Williams"],["2019-20","LAL","L. James"],["2019-20","MIA","J. Butler"],["2019-20","MIL","G. Antetokounmpo"],["2019-20","MIN","A. Wiggins"],["2019-20","BKN","S. Dinwiddie"],["2019-20","NYK","E. Payton"],["2019-20","ORL","M. Fultz"],["2019-20","IND","M. Brogdon"],["2019-20","PHI","B. Simmons"],["2019-20","PHX","D. Booker"],["2019-20","POR","D. Lillard"],["2019-20","SAC","D. Fox"],["2019-20","SAS","D. DeRozan"],["2019-20","OKC","C. Paul"],["2019-20","TOR","K. Lowry"],["2019-20","UTA","D. Mitchell"],["2019-20","MEM","J. Morant"],["2019-20","WAS","B. Beal"],["2019-20","DET","D. Rose"],["2019-20","CHA","D. Graham"],["2020-21","ATL","T. Young"],["2020-21","BOS","J. Tatum"],["2020-21","CLE","C. Sexton"],["2020-21","NOP","B. Ingram"],["2020-21","CHI","Z. LaVine"],["2020-21","DAL","L. Doncic"],["2020-21","DEN","N. Jokic"],["2020-21","GSW","S. Curry"],["2020-21","HOU","J. Wall"],["2020-21","LAC","K. Leonard"],["2020-21","LAL","L. James"],["2020-21","MIA","J. Butler"],["2020-21","MIL","G. Antetokounmpo"],["2020-21","MIN","R. Rubio"],["2020-21","BKN","K. Irving"],["2020-21","NYK","J. Randle"],["2020-21","ORL","C. Anthony"],["2020-21","IND","T. McConnell"],["2020-21","PHI","B. Simmons"],["2020-21","PHX","C. Paul"],["2020-21","POR","D. Lillard"],["2020-21","SAC","D. Fox"],["2020-21","SAS","D. DeRozan"],["2020-21","OKC","S. Gilgeous-Alexander"],["2020-21","TOR","F. VanVleet"],["2020-21","UTA","D. Mitchell"],["2020-21","MEM","J. Morant"],["2020-21","WAS","R. Westbrook"],["2020-21","DET","J. Grant"],["2020-21","CHA","T. Rozier"],["2021-22","ATL","T. Young"],["2021-22","BOS","J. Tatum"],["2021-22","CLE","D. Garland"],["2021-22","NOP","B. Ingram"],["2021-22","CHI","D. DeRozan"],["2021-22","DAL","L. Doncic"],["2021-22","DEN","N. Jokic"],["2021-22","GSW","S. Curry"],["2021-22","HOU","K. Porter Jr."],["2021-22","LAC","R. Jackson"],["2021-22","LAL","R. Westbrook"],["2021-22","MIA","K. Lowry"],["2021-22","MIL","J. Holiday"],["2021-22","MIN","D. Russell"],["2021-22","BKN","J. Harden"],["2021-22","NYK","J. Randle"],["2021-22","ORL","C. Anthony"],["2021-22","IND","M. Brogdon"],["2021-22","PHI","J. Embiid"],["2021-22","PHX","C. Paul"],["2021-22","POR","A. Simons"],["2021-22","SAC","D. Fox"],["2021-22","SAS","D. Murray"],["2021-22","OKC","S. Gilgeous-Alexander"],["2021-22","TOR","P. Siakam"],["2021-22","UTA","D. Mitchell"],["2021-22","MEM","J. Morant"],["2021-22","WAS","B. Beal"],["2021-22","DET","C. Cunningham"],["2021-22","CHA","L. Ball"],["2022-23","ATL","T. Young"],["2022-23","BOS","J. Tatum"],["2022-23","CLE","D. Garland"],["2022-23","NOP","C. McCollum"],["2022-23","CHI","D. DeRozan"],["2022-23","DAL","L. Doncic"],["2022-23","DEN","N. Jokic"],["2022-23","GSW","S. Curry"],["2022-23","HOU","K. Porter Jr."],["2022-23","LAC","P. George"],["2022-23","LAL","L. James"],["2022-23","MIA","J. Butler"],["2022-23","MIL","J. Holiday"],["2022-23","MIN","A. Edwards"],["2022-23","BKN","K. Irving"],["2022-23","NYK","J. Brunson"],["2022-23","ORL","M. Fultz"],["2022-23","IND","T. Haliburton"],["2022-23","PHI","J. Harden"],["2022-23","PHX","C. Paul"],["2022-23","POR","D. Lillard"],["2022-23","SAC","D. Fox"],["2022-23","SAS","T. Jones"],["2022-23","OKC","S. Gilgeous-Alexander"],["2022-23","TOR","P. Siakam"],["2022-23","UTA","J. Clarkson"],["2022-23","MEM","J. Morant"],["2022-23","WAS","B. Beal"],["2022-23","DET","K. Hayes"],["2022-23","CHA","T. Rozier"],["2023-24","ATL","T. Young"],["2023-24","BOS","J. Tatum"],["2023-24","CLE","D. Mitchell"],["2023-24","NOP","Z. Williamson"],["2023-24","CHI","D. DeRozan"],["2023-24","DAL","L. Doncic"],["2023-24","DEN","N. Jokic"],["2023-24","GSW","S. Curry"],["2023-24","HOU","F. VanVleet"],["2023-24","LAC","J. Harden"],["2023-24","LAL","L. James"],["2023-24","MIA","J. Butler"],["2023-24","MIL","G. Antetokounmpo"],["2023-24","MIN","A. Edwards"],["2023-24","BKN","M. Bridges"],["2023-24","NYK","J. Brunson"],["2023-24","ORL","P. Banchero"],["2023-24","IND","T. Haliburton"],["2023-24","PHI","T. Maxey"],["2023-24","PHX","D. Booker"],["2023-24","POR","S. Henderson"],["2023-24","SAC","D. Sabonis"],["2023-24","SAS","T. Jones"],["2023-24","OKC","S. Gilgeous-Alexander"],["2023-24","TOR","S. Barnes"],["2023-24","UTA","C. Sexton"],["2023-24","MEM","D. Bane"],["2023-24","WAS","T. Jones"],["2023-24","DET","C. Cunningham"],["2023-24","CHA","M. Bridges"],["2024-25","ATL","T. Young"],["2024-25","BOS","J. Tatum"],["2024-25","CLE","D. Garland"],["2024-25","NOP","C. McCollum"],["2024-25","CHI","J. Giddey"],["2024-25","DAL","S. Dinwiddie"],["2024-25","DEN","N. Jokić"],["2024-25","GSW","S. Curry"],["2024-25","HOU","J. Green"],["2024-25","LAC","J. Harden"],["2024-25","LAL","L. James"],["2024-25","MIA","T. Herro"],["2024-25","MIL","G. Antetokounmpo"],["2024-25","MIN","A. Edwards"],["2024-25","BKN","C. Johnson"],["2024-25","NYK","J. Brunson"],["2024-25","ORL","F. Wagner"],["2024-25","IND","T. Haliburton"],["2024-25","PHI","T. Maxey"],["2024-25","PHX","D. Booker"],["2024-25","POR","A. Simons"],["2024-25","SAC","D. DeRozan"],["2024-25","SAS","C. Paul"],["2024-25","OKC","S. Gilgeous-Alexander"],["2024-25","TOR","S. Barnes"],["2024-25","UTA","I. Collier"],["2024-25","MEM","D. Bane"],["2024-25","WAS","J. Poole"],["2024-25","DET","C. Cunningham"],["2024-25","CHA","L. Ball"],["2025-26","ATL","J. Johnson"],["2025-26","BOS","J. Brown"],["2025-26","CLE","D. Mitchell"],["2025-26","NOP","J. Fears"],["2025-26","CHI","J. Giddey"],["2025-26","DAL","C. Flagg"],["2025-26","DEN","N. Jokić"],["2025-26","GSW","B. Podziemski"],["2025-26","HOU","A. Sengun"],["2025-26","LAC","K. Leonard"],["2025-26","LAL","L. Dončić"],["2025-26","MIA","D. Mitchell"],["2025-26","MIL","R. Rollins"],["2025-26","MIN","J. Randle"],["2025-26","BKN","N. Claxton"],["2025-26","NYK","J. Brunson"],["2025-26","ORL","P. Banchero"],["2025-26","IND","A. Nembhard"],["2025-26","PHI","T. Maxey"],["2025-26","PHX","D. Booker"],["2025-26","POR","D. Avdija"],["2025-26","SAC","R. Westbrook"],["2025-26","SAS","D. Fox"],["2025-26","OKC","S. Gilgeous-Alexander"],["2025-26","TOR","S. Barnes"],["2025-26","UTA","I. Collier"],["2025-26","MEM","C. Spencer"],["2025-26","WAS","B. Carrington"],["2025-26","DET","C. Cunningham"],["2025-26","CHA","L. Ball"]],"hovertemplate":"%{customdata[1]} %{customdata[0]}: %{customdata[2]} %{y:.1f}%\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"rgba(42,120,214,0.5)","size":5},"mode":"markers","name":"NBA","x":[1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1995.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1996.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1997.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1998.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,1999.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2000.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2001.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2002.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2003.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2004.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2005.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2006.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2007.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2008.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2009.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2010.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2011.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2012.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2013.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2014.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2015.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2016.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2017.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2018.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2019.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2020.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2021.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2022.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2023.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8,2024.8],"y":[27.025306382300002,26.4968925269,30.637213254000002,23.7953935283,16.7779632721,25.445879458800004,28.3330734446,17.0051890289,18.7228766274,32.4426901473,40.117107137199994,21.2755754476,26.717924075,18.9740420272,18.462032429,20.064051241,17.006691692500002,32.3342133872,30.685655557199997,31.8566374404,21.9150265542,25.497347480100004,33.7090966025,39.940410851500005,34.4602789569,17.7215189873,34.563509708,38.117382937799995,22.3237399117,24.0137502046,19.1859561908,29.1469993257,22.9765418673,27.1580989331,18.209219858199997,14.1228517951,20.037134457700002,19.0446358653,20.144414972,38.7608069164,22.4140766321,33.5952848723,31.043613707200002,21.3163064833,15.635179153100001,30.2578888355,31.031543052,29.8494110631,16.196258615,16.1207035662,26.7804397768,34.186746988,21.8745035743,23.0781575991,15.669875335299999,37.9938271605,34.9675918232,24.0846864056,30.2900763359,16.2099871959,24.0617433414,23.8095238095,23.4864864865,35.5076419214,19.630038652699998,23.2189287572,14.6314631463,21.5906194239,34.1664299915,18.4104896976,16.8773038441,27.4466315498,21.9398188723,27.8009452321,28.3013844515,27.507331378299998,40.0,27.2459893048,24.4789142026,28.9589041096,40.8793509552,17.6254935138,28.4207525656,29.8485730926,35.3891731753,33.548206277999995,27.3407202216,16.4988009592,22.3534826634,24.2972844212,14.8080438757,25.502967144299998,34.9939246659,22.0766924412,28.2849764545,20.7180980107,20.806890299200003,18.689396309,35.7874424818,26.8208955224,35.5776706578,23.6242266363,25.180940892600002,24.8614647297,24.838501292,28.552077062,20.2046828966,26.2994350282,24.4465832531,38.3762200532,21.9959266802,30.2128340534,32.3172730252,24.4724409449,27.4705071243,20.4219681108,25.6616800921,26.7286366601,34.5,16.0977300295,25.482279048899997,30.123647604300004,21.4749837557,31.564945226899997,25.1137841352,23.5090881779,27.810953762200004,29.3632075472,26.1789600967,32.4160054027,21.421302578000002,25.4143646409,25.0,26.3375165125,34.625281441,22.9575035283,19.9762716892,19.5235795912,36.250766401,19.3409961686,29.6331891719,31.063478977699997,17.0173371486,27.3486430063,28.7205387205,25.731276117,24.1136967047,41.8908164889,9.7602161432,31.590941461299998,20.671999999999997,17.271430835,24.862236628799998,24.8897290485,29.221732746,24.242936897299998,26.5217391304,21.2633451957,34.4231955583,25.8349705305,26.479246393900002,27.833572453400002,25.3177602199,35.358778625999996,23.1221020093,18.1464958987,23.9782886335,38.5868760184,22.9632010284,31.366356383,27.4759854256,21.0134369435,23.7014543711,36.6394779772,30.3238469087,26.1317208694,25.3796095445,27.8883183569,23.724530090000002,30.7847082495,15.3791257806,28.143621084800003,32.4235986272,28.1043593131,32.2874033652,16.2648497554,24.794007490600002,25.2335040675,33.5089741479,20.2599388379,32.4512534819,22.3731005496,30.4958811178,38.53125,15.308213778999999,19.5639701664,25.6025538707,25.489566613199997,23.611338685899998,27.054908485899997,29.1089108911,22.6492093181,19.3325467723,25.3827160494,25.404712293600003,27.1712362502,30.943206567300003,24.3319502075,30.1775975388,25.7558967864,16.1676646707,29.6110832916,15.332997819200001,21.810250817900002,22.093218913,19.8391420912,32.9054477145,27.344010677300002,24.156391953299998,24.4668911336,18.2871536524,27.258375723599997,23.2506713,24.2664937591,19.829486991,24.195666447799997,16.5050015156,25.515687294200003,20.8806818182,22.6965939413,17.493606138100002,24.043246953799997,15.319974143500001,21.5040588145,34.3630573248,19.6889420612,25.0765018522,22.0921392732,26.313320825499996,18.6171804849,31.5292233787,16.049382716,27.168169101599997,32.208726945600006,23.732608348,23.1148804934,25.012624137400003,37.122752150100006,32.0757670632,16.1789724396,40.3157730186,36.4497199253,23.1388978408,24.6391454965,28.726757012300002,24.346608587400002,27.609890109899997,12.0616635609,20.097799511,27.5760397269,24.0969816922,25.9259259259,30.699810006299998,24.8311606722,38.8721685411,33.1432405233,25.582812738100003,19.8509592516,30.783438510099998,25.741965246800003,21.298657147700002,27.246653919699998,30.4008567931,31.832699619799996,24.376645501,18.894918598900002,29.1804910418,22.6358148893,18.6407449763,16.9941060904,38.1213736867,36.1829284137,14.867137571499999,23.15625,29.248039366400004,25.2256250925,29.1616405308,19.2102086567,25.0370614396,32.4802233597,33.527518013199995,27.8329393223,20.139930035,15.383371077300001,33.0487426265,30.1172791243,24.9047981721,22.3443223443,21.487360376199998,25.9869788059,28.442056792,16.5870532038,29.1899031406,24.7694753577,22.7675931402,19.212672522,30.6604506605,23.1369426752,20.6992777413,25.0843644544,22.412109375,37.4553630472,22.5461613217,19.8689956332,26.7313019391,20.0241801421,30.053070508,34.509864365,18.281225935600002,28.38382331,25.659245223400003,26.093774502099997,27.874289324099998,20.6455542022,36.9084682441,45.645300373699996,21.3244416873,18.12480881,33.2312404288,32.7871018898,23.1283219438,13.5058430718,27.882599580700003,23.1865072867,23.4009840098,16.8208706204,23.6744560838,24.992214263500003,24.233217592600003,14.357646381799999,30.7452447771,37.6571275742,26.1548064919,16.100667071,27.0408163265,24.9123876276,30.2637330613,37.4802470909,16.4885722766,17.6830200214,27.1087124133,30.6249030857,28.5977859779,30.3320370924,37.7893950709,47.9147068046,28.213491475199998,25.6921048777,25.8408408408,20.037079292599998,15.216393944,26.066718386299996,27.370478983399998,40.1654135338,21.908993412,18.4343821949,28.2836050446,24.9824856382,21.6127098321,22.3773265651,28.729281767999996,32.3605973421,27.1863691194,18.1845872677,31.986280942400004,25.205566097400002,26.9773796873,34.862110311799995,20.5613577023,19.7617928224,22.3221328285,29.1706846673,24.0342724368,36.825300288899996,37.597412145300005,24.1518694962,30.242554498,25.643651258,21.9670200236,23.1233703856,25.504828797200002,30.6613226453,25.2126723379,34.7650798573,25.7897078452,21.6628873772,23.621522572,17.6361297699,19.6613633046,18.1818181818,23.397532350299997,40.1997840173,24.5300605872,26.927621861200002,18.6952714536,33.9700488998,19.968189705,33.6961253809,21.3991163476,14.1284119107,22.035525684099998,24.2875647668,20.825574177500002,32.672039677600004,23.331740723,39.1345546431,37.8013646702,23.8537520271,19.1743383199,27.3271184082,22.911320216700002,18.3916832289,27.064896755200003,35.133908306900004,19.0865935505,20.481749667499997,20.6419831559,23.3489561142,24.8651887358,23.3045061447,26.2662483191,37.6663398235,27.5152082358,19.3847072879,28.9134174312,37.951352168,24.8680440356,24.1353039768,25.0708004173,28.7895142637,19.1828675577,27.072813161800003,22.2056074766,34.7213959944,23.044354838700002,21.8241712992,21.8130841121,16.9658038919,25.035893754499998,16.3209606987,22.2140762463,36.6740905716,23.9363740897,31.8691766496,26.452205882399998,19.111969112,32.8562909958,19.6874404422,22.1902570004,18.6224489796,20.9412209412,36.6028708134,23.703142749,22.304694748600003,29.9948015942,32.702652569099996,26.5931372549,17.6536943034,24.5172615565,34.6094354215,18.399019808,21.510002151,28.6701971168,19.8005919925,22.5135764158,34.9435382685,20.273531778000002,19.8050058207,24.524312896399998,29.389368868100004,28.012519561799998,31.7913094886,31.6855270995,32.7014903777,27.3036030715,18.5096153846,29.9097416744,21.3360800471,20.7778450363,20.2919708029,34.3472944054,27.5952088452,30.6658521686,16.6641757585,27.0613409415,35.343680709500006,19.6830821811,14.368694588799999,24.366784225700002,20.9672287623,17.468275105700002,28.689883913800003,27.9680696662,13.7048880767,26.5324519231,20.5592105263,19.8803943753,26.0604380371,26.072041166400002,35.0538227988,26.248216833100003,30.5387536925,17.526942711300002,30.306518923600002,21.9205708967,27.8519156263,20.0426114747,22.779979451,22.5669744211,20.4996896338,23.9729053159,27.3034182023,25.403674833,26.784895275999997,20.1632653061,28.1480431083,28.5287528006,21.2102404965,24.044538067999998,36.8263045032,28.985296258600002,25.394370553700004,25.421567238199998,20.471657905999997,30.1757393913,28.8970588235,17.065462754,21.72170789,33.7855579869,29.4171102168,34.5389563974,39.9669921606,16.746987951799998,21.6002530044,15.590997168000001,14.523212045200001,20.9856201318,11.0531309298,25.0671040859,13.281841587199999,16.5541626487,26.2404309612,28.831096196900003,18.7471069279,19.010012692100002,32.9141060454,24.3332852818,20.3432137285,20.0695179084,38.184501845,14.0056022409,19.4022770398,24.5209120157,26.9827947965,30.211940712,21.9606164384,19.3608483806,18.7770406692,18.5185185185,28.051657767299996,36.4447592068,37.4205396242,17.3620878262,23.0384219049,18.8642782816,24.7779617643,15.5960605615,21.8966035467,20.5903021785,21.7435158501,19.1378281623,16.8567251462,30.585291255399998,33.2364341085,18.4998600616,39.2886014551,27.3742185174,19.7033898305,17.1432940817,37.6757132916,30.852133927300002,27.082732776,28.196297890700002,26.7313208578,34.405778069600004,24.6661101836,23.9402212962,13.592946363,16.032537391800002,24.496644295299998,44.502954020000004,26.6757679181,16.4576365663,25.1386577926,25.501270827400003,25.722379603399997,11.919220449100001,19.3548387097,27.1775003587,29.7747306562,23.0483801912,24.3186582809,27.9339519651,16.558675306,18.6544342508,46.804353893400005,25.8258678611,17.1699489424,24.7216035635,39.949548592700005,21.4873726803,28.758915834499998,24.8989828619,20.9804736186,41.0540184453,24.6854485777,16.4228539884,20.8362176381,19.2159468439,18.8618096967,36.7451651099,23.3572686628,13.9795221843,20.0194228635,23.592680542,22.9623612239,24.2696629213,14.9986214502,14.012110970300002,22.3343332424,30.7955742887,16.3003929559,29.3834958122,17.5117840309,14.6389994315,43.3483422022,25.1648499529,21.430623384100002,17.6522636779,22.1503303965,20.737966430900002,27.681321758600003,30.848623853200003,24.1240231913,17.3564013841,24.5127815743,18.8591065292,25.5010834236,24.5307276935,22.9166666667,40.871152843000004,21.5706944261,23.8113496933,16.9763058697,22.5511966445,14.2799785867,31.000654022200003,14.0781492453,19.1144997325,19.0866975513,27.149909067299998,24.9762325139,30.1759306476,27.6821862348,26.4652723987,35.9323744638,20.2697592336,23.1678486998,24.1011794799,24.2219387755,24.8550924648,31.1598994842,36.693679092400004,17.7742076822,18.910310142500002,22.694038245199998,21.563342318100002,32.3672806067,24.2323771083,14.3609550562,37.3249499857,20.6314564237,38.1919905771,18.8401442308,23.1021299836,13.112033195,25.3923600829,17.108890420399998,20.910340614,20.3249673582,21.92956496,26.9377010822,34.4635908838,22.4102413184,26.2962962963,29.4712643678,21.8390804598,23.9801294596,25.660054231500002,22.3641223641,21.467981942799998,28.3937455579,33.924278846200004,21.777329684599998,19.3788417988,18.3020787905,20.7262810392,38.2220935283,29.0687919463,23.440183171199998,17.2714952567,18.496945588899997,21.3070320735,20.6114998479,22.8483469415,17.6116333725,21.8806259521,27.1724137931,12.8575969485,20.1236649803,20.359012715,31.8137459919,32.4381625442,26.6533352378,25.3706250955,16.643400031,18.2060390764,20.6693740372,24.336727377,37.843673528100005,10.2896944752,17.4959156394,39.1188080988,21.6170979786,28.9318303811,16.4877917896,27.198443579800003,35.126498002700004,24.5846748229,20.8922318765,18.5720016045,20.4861111111,26.9816877961,19.2079989475,23.6050430658,20.3862660944,20.0153374233,21.3340683572,18.9244945675,11.0897189064,18.0639935196,27.782571182100003,13.651181744099999,20.820688745200002,29.109973785999998,22.8516430634,21.4874950897,24.0530544573,21.9488067268,14.1239173884,19.6640316206,24.1632953292,33.3659371561,19.424637324800003,24.6866341206,21.5588084232,23.8569604087,34.2933947773,25.329717737000003,18.1462605191,18.8980569603,16.7802494535,20.1465201465,19.1684665227,23.9003115265,22.6184538653,13.578987632299999,24.785353535400002,16.9212378802,26.2261753494,26.890212325200004,21.4168247944,24.5739560297,26.464181994199997,19.212440431399997,25.986597170499998,23.2248902659,15.584254315199999,25.4538763494,14.759959142000001,21.476690918899997,17.893085871100002,25.8648087031,21.5931687917,19.2380233874,19.7421131698,24.2946508362,37.3925674858,28.6728697356,19.6104206501,25.224882807600004,25.169130543700003,25.9911351884,15.5252351305,25.2886134403,25.4526775395,15.134717029799999,30.903530011500003,24.435890629099998,28.5437997725,23.8675734634,24.5365731463,16.8537806033,26.0901075009,18.5499177528,29.134890371799997,16.0396542959,18.1978353889,13.4900149436,18.3296103251,23.3771353482,13.104544852300002,36.3669546174,24.8761628609,22.419804742,12.77458159,18.7784431138,15.949911459700001,25.8160237389,19.0661968286,19.2980264801,31.9417847568,26.986160943100003,22.308188265600002,25.276363184700003,23.7173038229,9.6304437423,24.5856697819,17.5118417386,27.197568389100002,19.419042496,25.765788478500003,19.5765133801,19.5595694668,23.1567108223,31.138287864500004,17.6349878158,18.1196801651,17.191740413,17.2724860706,31.4200521804,18.8784537907,23.2243382441,23.550281379999998,22.807441411000003,14.996164663799998,19.2511393029,18.188844518899998,26.3316461798,13.605101913199999,21.3677354709,18.6341081222,30.3639602952,16.7854123898,21.2744479495,19.6939782823,12.006100097,27.5701507168,19.0383111806,18.6617004881,25.0701351696,21.2377111167,20.8597514583,17.9266222744,21.287188828199998,29.1255031101,19.5149677908,17.0950836037,14.9312129244,15.707797123399999,28.2722513089,23.872810831],"type":"scatter"},{"customdata":[["1997","NYL","T. Weatherspoon"],["1997","CHA","A. Stinson"],["1997","CLE","M. Edwards"],["1997","HOU","C. Cooper"],["1997","PHO","M. Timms"],["1997","SAC","C. Tremitiere"],["1997","UTA","T. Reiss"],["1997","LAS","P. Toler"],["1998","NYL","T. Weatherspoon"],["1998","CHA","A. Stinson"],["1998","CLE","S. McConnell Serio"],["1998","HOU","C. Cooper"],["1998","PHO","M. Timms"],["1998","SAC","T. Penicheiro"],["1998","UTA","C. Tremitiere"],["1998","LAS","P. Toler"],["1998","DET","S. Brondello"],["1998","WAS","N. McCray"],["1999","NYL","T. Weatherspoon"],["1999","CHA","D. Staley"],["1999","CLE","M. Edwards"],["1999","HOU","C. Cooper"],["1999","PHO","M. Timms"],["1999","SAC","T. Penicheiro"],["1999","UTA","D. Black"],["1999","LAS","M. Mabika"],["1999","DET","J. Azzi"],["1999","WAS","A. Nagy"],["1999","ORL","S. Johnson"],["1999","MIN","B. Reed"],["2000","NYL","T. Weatherspoon"],["2000","CHA","D. Staley"],["2000","CLE","S. McConnell Serio"],["2000","HOU","C. Cooper"],["2000","PHO","B. Reed"],["2000","SAC","T. Penicheiro"],["2000","UTA","A. Goodson"],["2000","LAS","T. Dixon"],["2000","DET","E. Tornikidou"],["2000","WAS","C. Holdsclaw"],["2000","ORL","S. Johnson"],["2000","MIN","B. Lennox"],["2000","IND","R. Williams"],["2000","MIA","S. Sam"],["2000","POR","S. Thomas"],["2000","SEA","S. Henning"],["2001","NYL","T. Weatherspoon"],["2001","CHA","D. Staley"],["2001","CLE","H. Darling"],["2001","HOU","J. Arcain"],["2001","PHO","K. Veal"],["2001","SAC","T. Penicheiro"],["2001","UTA","J. Azzi"],["2001","LAS","T. Dixon"],["2001","DET","E. Brown"],["2001","WAS","C. Holdsclaw"],["2001","ORL","E. Powell"],["2001","MIN","K. Smith"],["2001","IND","R. Williams"],["2001","MIA","S. Sam"],["2001","POR","J. Stiles"],["2001","SEA","S. Henning"],["2002","NYL","T. Weatherspoon"],["2002","CHA","D. Staley"],["2002","CLE","M. Jones"],["2002","HOU","S. Swoopes"],["2002","PHO","G. Grubin"],["2002","SAC","T. Penicheiro"],["2002","UTA","J. Azzi"],["2002","LAS","T. Dixon"],["2002","DET","S. Cash"],["2002","WAS","C. Holdsclaw"],["2002","ORL","S. Johnson"],["2002","MIN","K. Smith"],["2002","IND","T. Catchings"],["2002","MIA","S. Sam"],["2002","POR","T. Jackson"],["2002","SEA","S. Bird"],["2003","NYL","T. Weatherspoon"],["2003","CHA","D. Staley"],["2003","CLE","H. Darling"],["2003","HOU","S. Swoopes"],["2003","PHO","T. Jackson"],["2003","SAC","T. Penicheiro"],["2003","SAN","M. Ferdinand-Harris"],["2003","LAS","N. Teasley"],["2003","DET","S. Cash"],["2003","WAS","C. Holdsclaw"],["2003","CON","S. Johnson"],["2003","MIN","T. Edwards"],["2003","IND","T. Catchings"],["2003","SEA","S. Bird"],["2004","NYL","B. Hammon"],["2004","CHA","D. Staley"],["2004","HOU","S. Swoopes"],["2004","PHO","D. Taurasi"],["2004","SAC","T. Penicheiro"],["2004","SAN","S. Johnson"],["2004","LAS","N. Teasley"],["2004","DET","S. Cash"],["2004","WAS","A. Beard"],["2004","CON","L. Whalen"],["2004","MIN","H. Darling"],["2004","IND","T. Catchings"],["2004","SEA","S. Bird"],["2005","NYL","B. Hammon"],["2005","CHA","D. Staley"],["2005","HOU","S. Swoopes"],["2005","PHO","D. Taurasi"],["2005","SAC","T. Penicheiro"],["2005","SAN","S. Johnson"],["2005","LAS","C. Holdsclaw"],["2005","DET","D. Nolan"],["2005","WAS","T. Johnson"],["2005","CON","L. Whalen"],["2005","MIN","K. Harrower"],["2005","IND","T. Catchings"],["2005","SEA","S. Bird"],["2006","NYL","L. Moore"],["2006","CHA","S. Sam"],["2006","HOU","S. Swoopes"],["2006","PHO","D. Taurasi"],["2006","SAC","T. Penicheiro"],["2006","SAN","S. Johnson"],["2006","LAS","T. Johnson"],["2006","DET","D. Nolan"],["2006","WAS","N. Teasley"],["2006","CON","L. Whalen"],["2006","MIN","S. Augustus"],["2006","IND","T. Catchings"],["2006","SEA","S. Bird"],["2006","CHI","J. Perkins"],["2007","NYL","L. Moore"],["2007","HOU","T. Thompson"],["2007","PHO","C. Pondexter"],["2007","SAC","T. Penicheiro"],["2007","SAN","B. Hammon"],["2007","LAS","M. Fernandez"],["2007","DET","D. Nolan"],["2007","WAS","A. Beard"],["2007","CON","L. Whalen"],["2007","MIN","S. Augustus"],["2007","IND","T. Catchings"],["2007","SEA","S. Bird"],["2007","CHI","D. Canty"],["2008","NYL","L. Moore"],["2008","HOU","S. Johnson"],["2008","PHO","C. Pondexter"],["2008","SAC","T. Penicheiro"],["2008","SAN","B. Hammon"],["2008","LAS","C. Parker"],["2008","DET","D. Nolan"],["2008","WAS","A. Beard"],["2008","CON","L. Whalen"],["2008","MIN","S. Augustus"],["2008","IND","K. Douglas"],["2008","SEA","S. Bird"],["2008","CHI","J. Perkins"],["2008","ATL","I. Latta"],["2009","NYL","L. Moore"],["2009","PHO","C. Pondexter"],["2009","SAC","T. Penicheiro"],["2009","SAN","B. Hammon"],["2009","LAS","N. Quinn"],["2009","DET","D. Nolan"],["2009","WAS","L. Harding"],["2009","CON","L. Whalen"],["2009","MIN","N. Anosike"],["2009","IND","T. Catchings"],["2009","SEA","S. Bird"],["2009","CHI","J. Perkins"],["2009","ATL","I. Castro Marques"],["2010","NYL","C. Pondexter"],["2010","PHO","D. Taurasi"],["2010","SAN","B. Hammon"],["2010","LAS","T. Penicheiro"],["2010","TUL","I. Latta"],["2010","WAS","L. Harding"],["2010","CON","R. Montgomery"],["2010","MIN","L. Whalen"],["2010","IND","T. Catchings"],["2010","SEA","S. Bird"],["2010","CHI","E. Prince"],["2010","ATL","A. McCoughtry"],["2011","NYL","C. Pondexter"],["2011","PHO","D. Taurasi"],["2011","SAN","B. Hammon"],["2011","LAS","T. Penicheiro"],["2011","TUL","I. Latta"],["2011","WAS","M. Ajavon"],["2011","CON","R. Montgomery"],["2011","MIN","L. Whalen"],["2011","IND","T. Catchings"],["2011","SEA","S. Bird"],["2011","CHI","E. Prince"],["2011","ATL","L. Harding"],["2012","NYL","C. Pondexter"],["2012","PHO","S. Prahalis"],["2012","SAN","B. Hammon"],["2012","LAS","K. Toliver"],["2012","TUL","T. Johnson"],["2012","WAS","J. Thomas"],["2012","CON","K. Lawson"],["2012","MIN","L. Whalen"],["2012","IND","T. Catchings"],["2012","SEA","S. Bird"],["2012","CHI","C. Vandersloot"],["2012","ATL","L. Harding"],["2013","NYL","C. Pondexter"],["2013","PHO","D. Taurasi"],["2013","SAN","D. Robinson"],["2013","LAS","L. Harding"],["2013","TUL","S. Diggins-Smith"],["2013","WAS","I. Latta"],["2013","CON","T. Charles"],["2013","MIN","L. Whalen"],["2013","IND","B. January"],["2013","SEA","T. Wright"],["2013","CHI","C. Vandersloot"],["2013","ATL","A. McCoughtry"],["2014","NYL","C. Pondexter"],["2014","PHO","D. Taurasi"],["2014","SAN","D. Robinson"],["2014","LAS","C. Parker"],["2014","TUL","S. Diggins-Smith"],["2014","WAS","I. Latta"],["2014","CON","A. Bentley"],["2014","MIN","L. Whalen"],["2014","IND","B. January"],["2014","SEA","S. Bird"],["2014","CHI","J. Faulkner"],["2014","ATL","A. McCoughtry"],["2015","NYL","E. Prince"],["2015","PHO","D. Bonner"],["2015","SAN","D. Robinson"],["2015","LAS","K. Toliver"],["2015","TUL","O. Sims"],["2015","WAS","I. Latta"],["2015","CON","J. Thomas"],["2015","MIN","M. Moore"],["2015","IND","B. January"],["2015","SEA","S. Bird"],["2015","CHI","C. Vandersloot"],["2015","ATL","A. McCoughtry"],["2016","NYL","T. Charles"],["2016","PHO","D. Taurasi"],["2016","SAN","M. Jefferson"],["2016","LAS","C. Parker"],["2016","DAL","O. Sims"],["2016","WAS","T. Hill"],["2016","CON","J. Thomas"],["2016","MIN","M. Moore"],["2016","IND","B. January"],["2016","SEA","S. Bird"],["2016","CHI","J. Faulkner"],["2016","ATL","A. McCoughtry"],["2017","NYL","T. Charles"],["2017","PHO","L. Mitchell"],["2017","SAN","K. Plum"],["2017","LAS","C. Gray"],["2017","DAL","S. Diggins-Smith"],["2017","WAS","K. Toliver"],["2017","CON","A. Thomas"],["2017","MIN","M. Moore"],["2017","IND","E. Wheeler"],["2017","SEA","S. Bird"],["2017","CHI","C. Vandersloot"],["2017","ATL","L. Clarendon"],["2018","NYL","B. Boyd-Jones"],["2018","PHO","D. Taurasi"],["2018","LVA","K. McBride"],["2018","LAS","C. Gray"],["2018","DAL","S. Diggins-Smith"],["2018","WAS","K. Toliver"],["2018","CON","J. Thomas"],["2018","MIN","M. Moore"],["2018","IND","E. Wheeler"],["2018","SEA","S. Bird"],["2018","CHI","C. Vandersloot"],["2018","ATL","T. Hayes"],["2019","NYL","B. Boyd-Jones"],["2019","PHO","L. Mitchell"],["2019","LVA","J. Young"],["2019","LAS","C. Gray"],["2019","DAL","A. Ogunbowale"],["2019","WAS","N. Cloud"],["2019","CON","J. Thomas"],["2019","MIN","O. Sims"],["2019","IND","E. Wheeler"],["2019","SEA","J. Canada"],["2019","CHI","C. Vandersloot"],["2019","ATL","T. Hayes"],["2020","NYL","L. Clarendon"],["2020","PHO","S. Diggins-Smith"],["2020","LVA","J. Young"],["2020","LAS","C. Gray"],["2020","DAL","A. Ogunbowale"],["2020","WAS","L. Mitchell"],["2020","CON","D. Bonner"],["2020","MIN","C. Dangerfield"],["2020","IND","J. Allemand"],["2020","SEA","J. Canada"],["2020","CHI","C. Vandersloot"],["2020","ATL","B. Laney-Hamilton"],["2021","NYL","B. Laney-Hamilton"],["2021","PHO","S. Diggins-Smith"],["2021","LVA","C. Gray"],["2021","LAS","E. Wheeler"],["2021","DAL","A. Ogunbowale"],["2021","WAS","N. Cloud"],["2021","CON","J. Thomas"],["2021","MIN","L. Clarendon"],["2021","IND","K. Mitchell"],["2021","SEA","S. Bird"],["2021","CHI","C. Vandersloot"],["2021","ATL","C. Williams"],["2022","NYL","S. Ionescu"],["2022","PHO","S. Diggins-Smith"],["2022","LVA","C. Gray"],["2022","LAS","J. Canada"],["2022","DAL","A. Ogunbowale"],["2022","WAS","N. Cloud"],["2022","CON","A. Thomas"],["2022","MIN","M. Jefferson"],["2022","IND","K. Mitchell"],["2022","SEA","S. Bird"],["2022","CHI","C. Vandersloot"],["2022","ATL","E. Wheeler"],["2023","NYL","C. Vandersloot"],["2023","PHO","S. Sutton"],["2023","LVA","C. Gray"],["2023","LAS","J. Canada"],["2023","DAL","A. Ogunbowale"],["2023","WAS","N. Cloud"],["2023","CON","A. Thomas"],["2023","MIN","N. Collier"],["2023","IND","E. Wheeler"],["2023","SEA","J. Loyd"],["2023","CHI","C. Williams"],["2023","ATL","R. Howard"],["2024","NYL","S. Ionescu"],["2024","PHO","N. Cloud"],["2024","LVA","J. Young"],["2024","LAS","D. Hamby"],["2024","DAL","A. Ogunbowale"],["2024","WAS","J. Vanloo"],["2024","CON","A. Thomas"],["2024","MIN","C. Williams"],["2024","IND","C. Clark"],["2024","SEA","S. Diggins-Smith"],["2024","CHI","L. Allen"],["2024","ATL","A. Gray"],["2025","NYL","S. Ionescu"],["2025","PHX","A. Thomas"],["2025","LVA","J. Young"],["2025","LAS","K. Plum"],["2025","DAL","P. Bueckers"],["2025","WAS","S. Sutton"],["2025","CON","M. Mabrey"],["2025","MIN","C. Williams"],["2025","IND","K. Mitchell"],["2025","SEA","S. Diggins"],["2025","CHI","A. Atkins"],["2025","ATL","R. Howard"],["2025","GSV","V. Burton"],["2026","NYL","B. Stewart"],["2026","PHX","A. Thomas"],["2026","LVA","J. Young"],["2026","LAS","E. Wheeler"],["2026","DAL","P. Bueckers"],["2026","WAS","S. Citron"],["2026","CON","C. Leger-Walker"],["2026","MIN","O. Miles"],["2026","IND","C. Clark"],["2026","PDX","C. Leite"],["2026","SEA","N. Hiedeman"],["2026","CHI","N. Cloud"],["2026","ATL","J. Canada"],["2026","GSV","V. Burton"],["2026","TOR","M. Mabrey"]],"hovertemplate":"%{customdata[1]} %{customdata[0]}: %{customdata[2]} %{y:.1f}%\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"rgba(235,104,52,0.5)","size":5},"mode":"markers","name":"WNBA","x":[1997.2,1997.2,1997.2,1997.2,1997.2,1997.2,1997.2,1997.2,1998.2,1998.2,1998.2,1998.2,1998.2,1998.2,1998.2,1998.2,1998.2,1998.2,1999.2,1999.2,1999.2,1999.2,1999.2,1999.2,1999.2,1999.2,1999.2,1999.2,1999.2,1999.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2000.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2001.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2002.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2003.2,2004.2,2004.2,2004.2,2004.2,2004.2,2004.2,2004.2,2004.2,2004.2,2004.2,2004.2,2004.2,2004.2,2005.2,2005.2,2005.2,2005.2,2005.2,2005.2,2005.2,2005.2,2005.2,2005.2,2005.2,2005.2,2005.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2006.2,2007.2,2007.2,2007.2,2007.2,2007.2,2007.2,2007.2,2007.2,2007.2,2007.2,2007.2,2007.2,2007.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2008.2,2009.2,2009.2,2009.2,2009.2,2009.2,2009.2,2009.2,2009.2,2009.2,2009.2,2009.2,2009.2,2009.2,2010.2,2010.2,2010.2,2010.2,2010.2,2010.2,2010.2,2010.2,2010.2,2010.2,2010.2,2010.2,2011.2,2011.2,2011.2,2011.2,2011.2,2011.2,2011.2,2011.2,2011.2,2011.2,2011.2,2011.2,2012.2,2012.2,2012.2,2012.2,2012.2,2012.2,2012.2,2012.2,2012.2,2012.2,2012.2,2012.2,2013.2,2013.2,2013.2,2013.2,2013.2,2013.2,2013.2,2013.2,2013.2,2013.2,2013.2,2013.2,2014.2,2014.2,2014.2,2014.2,2014.2,2014.2,2014.2,2014.2,2014.2,2014.2,2014.2,2014.2,2015.2,2015.2,2015.2,2015.2,2015.2,2015.2,2015.2,2015.2,2015.2,2015.2,2015.2,2015.2,2016.2,2016.2,2016.2,2016.2,2016.2,2016.2,2016.2,2016.2,2016.2,2016.2,2016.2,2016.2,2017.2,2017.2,2017.2,2017.2,2017.2,2017.2,2017.2,2017.2,2017.2,2017.2,2017.2,2017.2,2018.2,2018.2,2018.2,2018.2,2018.2,2018.2,2018.2,2018.2,2018.2,2018.2,2018.2,2018.2,2019.2,2019.2,2019.2,2019.2,2019.2,2019.2,2019.2,2019.2,2019.2,2019.2,2019.2,2019.2,2020.2,2020.2,2020.2,2020.2,2020.2,2020.2,2020.2,2020.2,2020.2,2020.2,2020.2,2020.2,2021.2,2021.2,2021.2,2021.2,2021.2,2021.2,2021.2,2021.2,2021.2,2021.2,2021.2,2021.2,2022.2,2022.2,2022.2,2022.2,2022.2,2022.2,2022.2,2022.2,2022.2,2022.2,2022.2,2022.2,2023.2,2023.2,2023.2,2023.2,2023.2,2023.2,2023.2,2023.2,2023.2,2023.2,2023.2,2023.2,2024.2,2024.2,2024.2,2024.2,2024.2,2024.2,2024.2,2024.2,2024.2,2024.2,2024.2,2024.2,2025.2,2025.2,2025.2,2025.2,2025.2,2025.2,2025.2,2025.2,2025.2,2025.2,2025.2,2025.2,2025.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2,2026.2],"y":[32.2118826056,30.5555555556,19.5379537954,36.0845839018,26.6420664207,25.6062767475,17.5287356322,28.336495888699996,32.4004975124,28.3950617284,26.497277676999996,34.2337052261,24.882629108,36.570663094400004,16.4375,29.2082111437,25.2593044539,29.230769230800004,32.4245939675,29.279811098000003,16.733601071000002,33.5306781485,22.9191797346,34.5394736842,22.0055710306,17.2928461143,20.5519671169,24.3157224698,31.8207926479,17.9245283019,31.9161327897,27.8632478632,16.587957497,31.778575089700002,26.0479041916,34.3023255814,18.0709534368,18.395721925100002,15.6930126002,24.0248728095,33.6177474403,22.5546605293,20.2360876897,18.954248366,18.2963407319,15.3153153153,30.6469298246,31.367781155000003,17.8023327195,28.8875230486,18.3710961421,23.897659227000002,24.2638398115,21.4859437751,18.9828503844,22.131661442,18.4795321637,23.3860342556,23.715651134999998,22.6733291693,17.6434676435,16.9986719788,27.8271166371,27.127355796699998,21.0237659963,30.1420630019,22.5978647687,31.6985645933,24.9014084507,21.4068825911,18.0876979294,15.3107344633,36.797274276,20.1234567901,29.0775809407,21.4072748956,21.008403361299997,36.6101694915,20.862916439099997,29.0743895514,18.413597733699998,28.1761716544,29.6856810244,32.9946524064,22.8384019082,30.1732925586,21.5655780197,22.045220966099997,35.1706036745,21.1398963731,25.2118644068,36.5878725591,28.101402373200003,32.306763285,22.9784758581,28.1995661605,24.1875332978,25.1321197886,27.582697201000002,23.0939226519,22.6364127499,22.7248816412,18.1180596143,25.4004576659,30.4234187141,28.034371643400004,20.3276699029,32.2109988777,25.7923497268,22.8337874659,28.449328449299998,24.9732620321,26.2370540852,31.733333333300003,28.287461773700002,15.7835400225,30.5587892899,29.5291709314,18.0580224985,16.9117647059,22.5185185185,25.9401709402,18.7969924812,21.5453194651,23.685503685500002,23.275862069,24.267027514699997,21.7330210773,22.5711481845,24.538545059700002,26.6900350526,17.9925253604,27.65625,16.5644171779,22.1852928957,21.4833759591,26.1335933691,16.7156862745,22.597526165599998,26.8127282212,27.093132643500002,20.190023753,18.5814185814,22.5836431227,18.3202357564,17.954872779600002,23.997995992,29.4291754757,27.817993795200003,27.355163727999997,23.6522583779,25.6859035005,26.6942576306,27.940492794,19.3853427896,21.659919028300003,31.4270994333,20.8595387841,23.7951807229,20.7896051974,28.9295662555,20.7015810277,29.041353383500002,17.8606476938,22.5272124941,30.623441396500002,25.7263355201,16.1682242991,22.729553437,29.914529914499997,19.6480938416,16.2303664921,32.7810120914,23.688332028199998,26.3108614232,26.3869463869,12.3730378578,27.232796486100003,22.9699416779,29.7810218978,26.4537654909,27.130044843,18.950437317800002,21.3449023861,31.691746465999998,18.705035971199997,29.7359888837,22.3087494274,17.659688674199998,23.9231966788,25.0675067507,29.391454467,21.7661097852,30.0250626566,22.0107369449,24.3978590544,31.588785046700004,24.3974422036,26.1190786615,28.4971849285,24.0281030445,17.2612801679,21.393258427,24.8657579513,23.2863849765,25.2780586451,25.3414978804,25.9293680297,25.0256410256,32.927400468399995,26.7156862745,23.3863837312,20.750121773,26.4516129032,15.5489319424,28.864218616600002,20.375195414300002,27.7982133473,26.484674329500002,28.2475200756,23.5472460839,26.468010517099998,29.2805100182,22.4114127934,31.7431192661,21.248789932199998,26.236457842700002,28.003533568900004,19.658119658100002,21.8985434455,19.5157384988,19.9641094661,18.2270916335,21.6362740266,25.7837837838,17.8380998546,19.504950495,17.2549019608,19.4690265487,20.4081632653,15.4854368932,23.273657289,28.3647523016,20.2702702703,20.3914428766,23.492063492099998,28.4984678243,22.8682170543,24.825337680500002,16.8994413408,25.257289879900004,21.8306832832,17.7314814815,27.2644927536,19.625,22.0791607058,19.8900091659,17.1665897554,16.152362584400002,23.5974304069,33.8215102975,19.436749769200002,21.605960264900002,17.546777546799998,27.242044358700003,24.7279059643,26.4815582263,32.9572167372,20.960502693,28.6598850066,17.587939698499998,27.782846715300003,32.046160674700005,23.503713412,24.1433635289,17.5789942145,21.0770659239,24.5487364621,31.4783347494,17.5930179146,20.8639705882,20.6516290727,18.7066974596,31.3368055556,26.9736842105,20.9110629067,24.8501613647,28.1805745554,26.1553120534,25.199436884100002,36.0541248363,17.746047934699998,23.4161988773,23.4633179114,16.8297455969,27.492063492099998,28.418230563,23.739071957,22.2144846797,21.7277486911,23.700623700599998,21.6761184625,39.609993906199996,22.8174603175,30.1449275362,27.9680900985,26.725274725300004,31.224279835399997,23.055555555599998,25.522813688200003,19.6615231458,19.3119266055,20.9562563581,19.964586100000002,34.4217687075,26.345083487900002,34.118133002899995,26.340227944299997,28.325215436500002,24.3277848912,20.2070393375,30.1973960521,25.316957210800002,19.132231405,21.512898994300002,18.6682520809,22.7029096478,16.9585647159,29.0119363395,24.026740070800003,32.153392330399996,31.0031595577,26.1188811189,27.3836765828,34.67951093,15.011459129099999,25.158404770800004,25.097580015600002,27.308659719700003,21.119202759700002,25.881942018900002,30.8729861371,23.1039325843,18.2893180922,27.5117032769,17.668756916299998,33.087378640800004,26.2195121951,39.539748954,29.4160852001,18.372907746200003,15.215622457299999,22.8250082699,37.2231404959,27.5415282392,30.2217808673,24.1765704584,18.5376661743,18.5459940653,28.1525851198,19.232,26.302083333300004,15.610286128199999,18.8457776329,29.659173313999997,16.5562913907,36.9721936148,30.441354292599996,20.854430379700002,28.1240498632,19.9306759099,16.3301452356,31.0314167161,34.5523698069,28.530351437700002,24.7213779129,20.6084396467,30.1922470848,27.223900637800003,16.8706582865],"type":"scatter"},{"customdata":["1996-97","1997-98","1998-99","1999-00","2000-01","2001-02","2002-03","2003-04","2004-05","2005-06","2006-07","2007-08","2008-09","2009-10","2010-11","2011-12","2012-13","2013-14","2014-15","2015-16","2016-17","2017-18","2018-19","2019-20","2020-21","2021-22","2022-23","2023-24","2024-25","2025-26"],"hovertemplate":"NBA mean %{customdata}: %{y:.1f}%\u003cextra\u003e\u003c\u002fextra\u003e","line":{"color":"#2a78d6","width":2.5},"mode":"lines","name":"NBA mean","showlegend":false,"x":[1996,1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024,2025],"y":[26.635335175699996,24.7895346562,26.504238672699998,25.534194747900003,26.229540383299998,26.354251581600003,25.938097249,23.6936924245,25.405116132,26.8352696507,24.8660562517,25.7994701204,26.9381363175,25.6506012062,26.205596173399996,24.8359178649,25.3153775769,25.095973165199997,23.2982090395,24.7851694219,25.317284153699998,23.0007615054,24.404923879800002,24.291640868200002,22.9046946436,22.4093585685,22.2207710982,22.6549957615,22.1211581,20.7417299382],"type":"scatter"},{"customdata":["1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026"],"hovertemplate":"WNBA mean %{customdata}: %{y:.1f}%\u003cextra\u003e\u003c\u002fextra\u003e","line":{"color":"#eb6834","width":2.5},"mode":"lines","name":"WNBA mean","showlegend":false,"x":[1997,1998,1999,2000,2001,2002,2003,2004,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024,2025,2026],"y":[27.062943818399997,28.3115619175,25.2782304488,23.3534439911,22.5458939922,25.321725874000002,26.7100099483,25.4527470001,26.5193167334,22.037461186599998,22.0705633785,24.832513916499998,23.1454239195,24.6169249906,24.7235946467,24.8321833302,25.2146333251,24.164632590900002,20.6263673602,22.5635898644,23.385509589799998,23.9133800828,24.8024589518,24.5920881796,25.441840487,23.983967559899998,26.5060502771,25.431657851599997,24.3748918537,25.5293268144],"type":"scatter"},{"customdata":[["2008-09","NOH","C. Paul"],["2016-17","OKC","R. Westbrook"],["2020","CHI","C. Vandersloot"],["2021-22","ATL","T. Young"],["2023-24","DAL","L. Doncic"],["2024","IND","C. Clark"]],"hovertemplate":"%{customdata[1]} %{customdata[0]}: %{customdata[2]} %{y:.1f}%\u003cextra\u003e\u003c\u002fextra\u003e","marker":{"color":"#52514e","size":9},"mode":"markers","name":"Named in the story","showlegend":false,"x":[2007.8,2015.8,2020.2,2020.8,2022.8,2024.2],"y":[47.9147068046,46.804353893400005,39.609993906199996,39.1188080988,37.3925674858,39.539748954],"type":"scatter"}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"white","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#52514e"},"error_y":{"color":"#52514e"},"marker":{"line":{"color":"white","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#52514e","gridcolor":"#e1e0d9","linecolor":"#e1e0d9","minorgridcolor":"#e1e0d9","startlinecolor":"#52514e"},"baxis":{"endlinecolor":"#52514e","gridcolor":"#e1e0d9","linecolor":"#e1e0d9","minorgridcolor":"#e1e0d9","startlinecolor":"#52514e"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"fillpattern":{"fillmode":"overlay","size":10,"solidity":0.2},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#eceae2"},"line":{"color":"white"}},"header":{"fill":{"color":"#e1e0d9"},"line":{"color":"white"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#52514e","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#52514e"},"geo":{"bgcolor":"white","lakecolor":"white","landcolor":"white","showlakes":true,"showland":true,"subunitcolor":"#e1e0d9"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"light"},"paper_bgcolor":"#fcfcfb","plot_bgcolor":"#fcfcfb","polar":{"angularaxis":{"gridcolor":"#eceae2","linecolor":"#eceae2","ticks":""},"bgcolor":"white","radialaxis":{"gridcolor":"#eceae2","linecolor":"#eceae2","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"white","gridcolor":"#DFE8F3","gridwidth":2,"linecolor":"#eceae2","showbackground":true,"ticks":"","zerolinecolor":"#eceae2"},"yaxis":{"backgroundcolor":"white","gridcolor":"#DFE8F3","gridwidth":2,"linecolor":"#eceae2","showbackground":true,"ticks":"","zerolinecolor":"#eceae2"},"zaxis":{"backgroundcolor":"white","gridcolor":"#DFE8F3","gridwidth":2,"linecolor":"#eceae2","showbackground":true,"ticks":"","zerolinecolor":"#eceae2"}},"shapedefaults":{"line":{"color":"#52514e"}},"ternary":{"aaxis":{"gridcolor":"#DFE8F3","linecolor":"#A2B1C6","ticks":""},"baxis":{"gridcolor":"#DFE8F3","linecolor":"#A2B1C6","ticks":""},"bgcolor":"white","caxis":{"gridcolor":"#DFE8F3","linecolor":"#A2B1C6","ticks":""}},"title":{"x":0.05},"xaxis":{"automargin":true,"gridcolor":"#eceae2","linecolor":"#eceae2","ticks":"","title":{"standoff":15},"zerolinecolor":"#eceae2","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#eceae2","linecolor":"#eceae2","ticks":"","title":{"standoff":15},"zerolinecolor":"#eceae2","zerolinewidth":2}}},"title":{"text":"Heliocentric teams stand out in every era; the league average never followed\u003cbr\u003eEach dot is a team-season's top creator share on season totals; lines are league means"},"margin":{"l":70,"r":30,"t":80,"b":60},"legend":{"orientation":"h","y":-0.2},"xaxis":{"title":{"text":"Season (starting year)"}},"yaxis":{"title":{"text":"Top creator's share (%)"},"range":[5,61]},"height":640,"annotations":[{"font":{"color":"#52514e","size":12},"showarrow":false,"text":"Paul","x":2007.8,"xanchor":"right","xshift":-7,"y":47.9147068046,"yanchor":"middle"},{"font":{"color":"#52514e","size":12},"showarrow":false,"text":"Westbrook","x":2015.8,"xanchor":"right","xshift":0,"y":52,"yanchor":"bottom"},{"font":{"color":"#52514e","size":12},"showarrow":false,"text":"Vandersloot","x":2020.2,"xanchor":"right","xshift":0,"y":58,"yanchor":"bottom"},{"font":{"color":"#52514e","size":12},"showarrow":false,"text":"Young","x":2020.8,"xanchor":"left","xshift":0,"y":54,"yanchor":"bottom"},{"font":{"color":"#52514e","size":12},"showarrow":false,"text":"Doncic","x":2022.8,"xanchor":"left","xshift":0,"y":50,"yanchor":"bottom"},{"font":{"color":"#52514e","size":12},"showarrow":false,"text":"Clark","x":2024.2,"xanchor":"left","xshift":0,"y":46,"yanchor":"bottom"}],"shapes":[{"line":{"color":"#52514e","width":1},"type":"line","x0":2015.8,"x1":2015.8,"y0":47.6043538934,"y1":51.7},{"line":{"color":"#52514e","width":1},"type":"line","x0":2020.2,"x1":2020.2,"y0":40.40999390619999,"y1":57.7},{"line":{"color":"#52514e","width":1},"type":"line","x0":2020.8,"x1":2020.8,"y0":39.9188080988,"y1":53.7},{"line":{"color":"#52514e","width":1},"type":"line","x0":2022.8,"x1":2022.8,"y0":38.1925674858,"y1":49.7},{"line":{"color":"#52514e","width":1},"type":"line","x0":2024.2,"x1":2024.2,"y0":40.339748953999994,"y1":45.7}]},                        {"responsive": true}                    )                };            </script>        </div>
+<script>
+(function () {
+  // Figures are authored on the light family palette; on a dark scheme the
+  // same spec is re-rendered through this light->dark map (chrome and series
+  // steps from the family palette). Each plot's light spec is remembered so
+  // theme flips are lossless in both directions.
+  var MAP = {"white": "#1a1a19", "#fff": "#1a1a19", "#fcfcfb": "#1a1a19",
+    "#ffffff": "#1a1a19",
+    "#f2f1ea": "#21201e", "#eceae2": "#262624", "#e1e0d9": "#2c2c2a",
+    "#c3c2b7": "#383835", "#52514e": "#c3c2b7", "#2a3f5f": "#c3c2b7",
+    "#0b0b0b": "#f5f3ec", "#161512": "#f5f3ec", "#2a78d6": "#3987e5",
+    "#eb6834": "#d95926", "#1baf7a": "#199e70"};
+  var mq = window.matchMedia("(prefers-color-scheme: dark)");
+  // The parent page's manual theme toggle overrides the OS preference; it
+  // arrives as a postMessage from the embedding page.
+  var override = null;
+  var themeFn = null;
+  function isDark() {
+    return override ? override === "dark" : mq.matches;
+  }
+  function stampBody() {
+    document.body.classList.toggle("fam-dark", override === "dark");
+    document.body.classList.toggle("fam-light", override === "light");
+  }
+  window.addEventListener("message", function (e) {
+    if (!e.data || !e.data.famTheme) { return; }
+    var t = e.data.famTheme;
+    override = (t === "dark" || t === "light") ? t : null;
+    stampBody();
+    if (themeFn) { themeFn(); }
+  });
+  function darken(o) {
+    if (typeof o === "string") { return MAP[o.toLowerCase()] || o; }
+    if (Array.isArray(o)) { return o.map(darken); }
+    if (o && typeof o === "object") {
+      var r = {}; for (var k in o) { r[k] = darken(o[k]); } return r;
+    }
+    return o;
+  }
+  function copy(o) { return JSON.parse(JSON.stringify(o)); }
+  // Hand-built figure pages (e.g. animated histograms) often omit chrome
+  // colors and inherit plotly's defaults; pin those to the family's light
+  // values so the dark map has something to map.
+  function withDefaults(layout) {
+    var L = layout ? copy(layout) : {};
+    L.paper_bgcolor = L.paper_bgcolor || "#fcfcfb";
+    L.plot_bgcolor = L.plot_bgcolor || "#fcfcfb";
+    L.font = L.font || {}; L.font.color = L.font.color || "#52514e";
+    ["xaxis", "yaxis"].forEach(function (a) {
+      L[a] = L[a] || {};
+      L[a].gridcolor = L[a].gridcolor || "#e1e0d9";
+      if (L[a].zeroline !== false) {
+        L[a].zerolinecolor = L[a].zerolinecolor || "#e1e0d9";
+      }
+    });
+    return L;
+  }
+  // Route every author-side render through the theme: remember the light
+  // spec, darken it when the scheme is dark.
+  var origReact = null;
+  function installWrapper() {
+    if (origReact || !window.Plotly) { return; }
+    origReact = Plotly.react;
+    Plotly.react = function (gd, data, layout, config) {
+      var el = typeof gd === "string" ? document.getElementById(gd) : gd;
+      var L = withDefaults(layout), D = copy(data || []);
+      if (el) { el._lightSpec = {data: copy(D), layout: copy(L),
+                                 config: config}; }
+      if (isDark()) { D = darken(D); L = darken(L); }
+      return origReact.call(Plotly, el || gd, D, L, config);
+    };
+  }
+  installWrapper();
+  window.addEventListener("load", function () {
+    installWrapper();
+    var gs = Array.prototype.slice.call(
+      document.querySelectorAll(".plotly-graph-div, .js-plotly-plot"));
+    // Plots rendered before the wrapper installed (write_html pages, or a
+    // hand-built page that drew during parse): their current spec is the
+    // light spec.
+    gs.forEach(function (g) {
+      if (!g._lightSpec) {
+        g._lightSpec = {data: copy(g.data),
+                        layout: withDefaults(g.layout)};
+      }
+    });
+    // Re-render each plot from its light spec, darkened when the scheme is
+    // dark. Sizing is plotly's own job: the layouts get autosize and every
+    // figure ships config {responsive: true}, which react() preserves.
+    function theme() {
+      gs.forEach(function (g) {
+        var src = g._lightSpec;
+        var D = copy(src.data), L = copy(src.layout);
+        delete L.width; L.autosize = true;
+        if (isDark()) { D = darken(D); L = darken(L); }
+        origReact.call(Plotly, g, D, L, src.config);
+      });
+    }
+    themeFn = theme;
+    stampBody();
+    theme();
+    if (mq.addEventListener) { mq.addEventListener("change", theme); }
+  });
+})();
+</script></body>
+</html>

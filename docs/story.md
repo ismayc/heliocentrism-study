@@ -45,6 +45,8 @@ every night they play. Both versions are reported. Eras are compared by the
 first five seasons against the last five, with 95% Welch intervals for the
 change; season means carry 95% t intervals across teams.
 
+{{svg:dg1_crediting|The crediting rule on a real Minnesota game from the 2025-26 season. The assisted three counts for the passer, not the shooter; the unassisted putback counts for the shooter. Adding up the game gives each player's share, the top creator's share, and the effective number of creators, and every measure in this study starts from that arithmetic.}}
+
 Passers are matched to players by name within the shooter's team and game,
 in three passes, each accepted only when it finds exactly one player. At
 least 99.8% of assisted baskets resolve in every season, and 993 (0.05%)
@@ -65,7 +67,7 @@ of creators per game rose from 5.32 to 5.53 (+0.21, interval +0.08 to
 +0.34). The most recent season, 2025-26, was the least concentrated NBA
 season of the 30, at 29.1% (27.8% to 30.5%).
 
-{{fig:fig1_game_top1_py|The top creator's share of a team's created points per game, averaged across teams, with 95% intervals. The NBA line drifts down after the late 2000s; the WNBA line moves around a flat level.}}
+{{fig:fig1_game_top1_py|The top creator's share of a team's created points per game, averaged across teams, with 95% bands. The dashed segments are the NBA's first-five and last-five season means. The NBA line drifts down after the late 2000s and ends at its lowest season; the WNBA line moves around a flat level.}}
 
 A hinge fit on the season means puts the NBA's turn in 2008, but its
 approximate 95% set runs from 2005 to 2022. The data date a slow drift, not
@@ -83,6 +85,12 @@ games missed by top players would produce, though games played were not
 measured here, so that cause is unverified. Any usage or concentration claim
 built on season totals mixes availability into it.
 
+{{svg:dg3_missed_games|Left, an illustration with a made-up team: the star's role is the same in every game played, yet the season-total share comes out well below the per-game average, because the games the star missed count in the denominator. Right, the real NBA change from the first five seasons to the last five, measured both ways, with 95% intervals.}}
+
+The same gap runs through every season, not only the two eras compared.
+
+{{fig:fig4_season_vs_game_py|The NBA's top creator share by season, per game (blue) and on season totals (grey, dotted), with 95% bands. The season-total line sits lower and falls further.}}
+
 <div class="eyebrow beat">League against league</div>
 
 ## The WNBA is now the more concentrated league
@@ -93,7 +101,7 @@ WNBA's, with an interval excluding zero, in 5 of 30 seasons (WNBA years
 the gap was -3.0 points (-5.3 to -0.6), the NBA's 29.1% against the WNBA's
 32.1%. In most seasons the two leagues cannot be told apart.
 
-{{fig:fig2_league_gap_py|NBA minus WNBA in the per-game top creator share, each WNBA season paired with the NBA season ending that year, with 95% Welch intervals. Points above zero mean the NBA was more concentrated; only 2026 sits clearly below.}}
+{{fig:fig2_league_gap_py|NBA minus WNBA in the per-game top creator share, each WNBA season paired with the NBA season ending that year, with a 95% Welch band. Blue points are seasons where the NBA was clearly more concentrated, grey points are seasons the two leagues cannot be told apart, and the one orange point, 2026, is the season the WNBA was clearly more concentrated.}}
 
 Both leagues assist more of their baskets than they did, which spreads
 creation by how it is counted. The NBA's assisted share rose from 60.9% to
@@ -101,7 +109,7 @@ creation by how it is counted. The NBA's assisted share rose from 60.9% to
 67.4% (+4.9, interval +3.5 to +6.4). Part of the NBA's per-game fall is
 this counting effect, not only a change in who has the ball.
 
-{{fig:fig3_assisted_share_py|Share of made field goals that were assisted, by season, with 95% intervals. Both leagues rise, the WNBA by more.}}
+{{fig:fig3_assisted_share_py|Share of made field goals that were assisted, by season, with 95% bands. Both leagues rise, the WNBA by more. More assists spread credit away from the scorer by construction, which ties this rise to the NBA's per-game fall above.}}
 
 <div class="eyebrow beat">The stars</div>
 
@@ -116,6 +124,13 @@ Mavericks (37.4%, 2.62). In the WNBA, Courtney Vandersloot's 2020 Sky
 (39.6%) and Caitlin Clark's 2024 Fever (39.5%) top the list. These teams are
 outliers in their seasons. The league averages show the typical NBA team did
 not follow them.
+
+{{svg:dg2_two_teams|The 2008-09 Hornets beside the typical 2025-26 NBA team (Minnesota, the median of that season's top creator shares), each bar split into every player's share of the season's created points. Chris Paul's segment is nearly half the Hornets' bar; Minnesota's is about a fifth, and its credit is spread across more players.}}
+
+Set against every team-season, those standouts sit far above their leagues
+in every era, while the league means stay flat or drift down.
+
+{{fig:fig5_team_spread_py|Every team-season's top creator share on season totals (NBA blue, WNBA orange), the two league means, and the six teams named above. Teams above the cloud appear in the late 1990s and in every decade since; the league mean never rises toward them.}}
 
 <div class="eyebrow beat">Limits</div>
 

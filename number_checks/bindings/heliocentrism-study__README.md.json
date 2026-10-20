@@ -1,0 +1,31 @@
+{
+ "bindings": [
+  {
+   "token": "0.2%",
+   "sign": "",
+   "before": "ithin the game and team. Under",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 100,
+   "abs": false,
+   "expr": {
+    "op": "round",
+    "args": [
+     {
+      "op": "1-",
+      "args": [
+       {
+        "agg": "min",
+        "table": "output/validation.csv",
+        "column": "resolved"
+       }
+      ]
+     },
+     3
+    ]
+   }
+  }
+ ]
+}

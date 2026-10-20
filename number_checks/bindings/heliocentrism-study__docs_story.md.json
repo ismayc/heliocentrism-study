@@ -1,0 +1,1102 @@
+{
+ "bindings": [
+  {
+   "token": "35,492",
+   "sign": "",
+   "before": " game the play-by-play covers:",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 1,
+   "abs": false,
+   "expr": {
+    "agg": "sum",
+    "table": "output/validation.csv",
+    "column": "games",
+    "where": {
+     "league": "nba"
+    }
+   }
+  },
+  {
+   "token": "6,469",
+   "sign": "",
+   "before": " # NBA games from ## to ## and",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 1,
+   "abs": false,
+   "expr": {
+    "agg": "sum",
+    "table": "output/validation.csv",
+    "column": "games",
+    "where": {
+     "league": "wnba"
+    }
+   }
+  },
+  {
+   "token": "1,838,338",
+   "sign": "",
+   "before": " # WNBA games from # to # with",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 1,
+   "abs": false,
+   "expr": {
+    "agg": "sum",
+    "table": "output/validation.csv",
+    "column": "assisted"
+   }
+  },
+  {
+   "token": "30",
+   "sign": "",
+   "before": "; and # is the only one of the",
+   "nth": 0,
+   "table": "output/breaks.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "game_top1_share"
+   },
+   "column": "seasons",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "31.5%",
+   "sign": "",
+   "before": "game</div> <div class=\"value\">",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "first_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "30.5%",
+   "sign": "",
+   "before": "/div> <div class=\"value\">#% to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "last_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "1.0",
+   "sign": "-",
+   "before": "nst the last five: a change of",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "1.9",
+   "sign": "-",
+   "before": "change of # point (#% interval",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "0.1",
+   "sign": "-",
+   "before": "e of # point (#% interval # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "31.0%",
+   "sign": "",
+   "before": "game</div> <div class=\"value\">",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "game_top1_share"
+   },
+   "column": "first_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "31.5%",
+   "sign": "",
+   "before": "/div> <div class=\"value\">#% to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "game_top1_share"
+   },
+   "column": "last_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "0.4",
+   "sign": "+",
+   "before": "> <div class=\"sub\">A change of",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "game_top1_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "0.8",
+   "sign": "-",
+   "before": "hange of # points (#% interval",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "game_top1_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "1.7",
+   "sign": "+",
+   "before": " of # points (#% interval # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "game_top1_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "3.0",
+   "sign": "-",
+   "before": " gap</div> <div class=\"value\">",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {
+    "wnba_year": 2026,
+    "metric": "game_top1_share"
+   },
+   "column": "gap",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "5.3",
+   "sign": "-",
+   "before": "A ## minus WNBA # (#% interval",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {
+    "wnba_year": 2026,
+    "metric": "game_top1_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "0.6",
+   "sign": "-",
+   "before": "minus WNBA # (#% interval # to",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {
+    "wnba_year": 2026,
+    "metric": "game_top1_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "3.9",
+   "sign": "-",
+   "before": "tate</div> <div class=\"value\">",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "top1_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "1.0",
+   "sign": "-",
+   "before": "</div> <div class=\"value\"># vs",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "99.8%",
+   "sign": "",
+   "before": "s exactly one player. At least",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 100,
+   "abs": false,
+   "expr": {
+    "agg": "min",
+    "table": "output/validation.csv",
+    "column": "resolved"
+   }
+  },
+  {
+   "token": "993",
+   "sign": "",
+   "before": "s resolve in every season, and",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 1,
+   "abs": false,
+   "expr": {
+    "agg": "sum",
+    "table": "output/validation.csv",
+    "column": "unresolved"
+   }
+  },
+  {
+   "token": "0.05%",
+   "sign": "",
+   "before": "solve in every season, and # (",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 100,
+   "abs": false,
+   "expr": {
+    "op": "/",
+    "args": [
+     {
+      "agg": "sum",
+      "table": "output/validation.csv",
+      "column": "unresolved"
+     },
+     {
+      "agg": "sum",
+      "table": "output/validation.csv",
+      "column": "assisted"
+     }
+    ]
+   }
+  },
+  {
+   "token": "99.7%",
+   "sign": "",
+   "before": "league's game logs in at least",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 100,
+   "abs": false,
+   "expr": {
+    "op": "min",
+    "args": [
+     {
+      "agg": "min",
+      "table": "output/validation.csv",
+      "column": "ast_match",
+      "where": {
+       "league": "wnba"
+      },
+      "range": {
+       "year": [
+        1999,
+        2100
+       ]
+      }
+     },
+     {
+      "agg": "min",
+      "table": "output/validation.csv",
+      "column": "ast_match",
+      "where": {
+       "league": "nba"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "token": "92.1%",
+   "sign": "",
+   "before": "n every season except WNBA # (",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {
+    "league": "wnba",
+    "year": 1997
+   },
+   "column": "ast_match",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "94.2%",
+   "sign": "",
+   "before": "xcept WNBA # (#%) and WNBA # (",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {
+    "league": "wnba",
+    "year": 1998
+   },
+   "column": "ast_match",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "99.9%",
+   "sign": "",
+   "before": " field goals match in at least",
+   "nth": 0,
+   "table": "output/validation.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 100,
+   "abs": false,
+   "expr": {
+    "agg": "min",
+    "table": "output/validation.csv",
+    "column": "fgm_match"
+   }
+  },
+  {
+   "token": "31.5%",
+   "sign": "",
+   "before": "am's top creator accounted for",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "first_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "30.5%",
+   "sign": "",
+   "before": "n a game. Over ## to ## it was",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "last_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "1.0",
+   "sign": "-",
+   "before": "# to ## it was #%, a change of",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "1.9",
+   "sign": "-",
+   "before": " # point with a #% interval of",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "0.1",
+   "sign": "-",
+   "before": "int with a #% interval of # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "5.32",
+   "sign": "",
+   "before": "of creators per game rose from",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_eff_creators"
+   },
+   "column": "first_mean",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "5.53",
+   "sign": "",
+   "before": "eators per game rose from # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_eff_creators"
+   },
+   "column": "last_mean",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "0.21",
+   "sign": "+",
+   "before": "rs per game rose from # to # (",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_eff_creators"
+   },
+   "column": "change",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "0.08",
+   "sign": "+",
+   "before": "e rose from # to # (# interval",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_eff_creators"
+   },
+   "column": "lo",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "0.34",
+   "sign": "+",
+   "before": "e from # to # (# interval # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_eff_creators"
+   },
+   "column": "hi",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "30",
+   "sign": "",
+   "before": "concentrated NBA season of the",
+   "nth": 0,
+   "table": "output/breaks.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "seasons",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "29.1%",
+   "sign": "",
+   "before": "ntrated NBA season of the # at",
+   "nth": 0,
+   "table": "output/league_seasons.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 100,
+   "abs": false,
+   "expr": {
+    "agg": "min",
+    "table": "output/league_seasons.csv",
+    "column": "mean",
+    "where": {
+     "league": "nba",
+     "metric": "game_top1_share"
+    }
+   }
+  },
+  {
+   "token": "27.8%",
+   "sign": "",
+   "before": "ed NBA season of the # at #% (",
+   "nth": 0,
+   "table": "output/league_seasons.csv",
+   "where": {
+    "league": "nba",
+    "season": "2025-26",
+    "metric": "game_top1_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "30.5%",
+   "sign": "",
+   "before": "A season of the # at #% (#% to",
+   "nth": 0,
+   "table": "output/league_seasons.csv",
+   "where": {
+    "league": "nba",
+    "season": "2025-26",
+    "metric": "game_top1_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "25.9%",
+   "sign": "",
+   "before": "'s top creator share fell from",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "top1_share"
+   },
+   "column": "first_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "22.0%",
+   "sign": "",
+   "before": " creator share fell from #% to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "top1_share"
+   },
+   "column": "last_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "3.9",
+   "sign": "-",
+   "before": "ell from #% to #%, a change of",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "top1_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "5.3",
+   "sign": "-",
+   "before": "hange of # points (#% interval",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "top1_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "2.5",
+   "sign": "-",
+   "before": " of # points (#% interval # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "top1_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "7.32",
+   "sign": "",
+   "before": "e number of creators rose from",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "eff_creators"
+   },
+   "column": "first_mean",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "8.87",
+   "sign": "",
+   "before": "ber of creators rose from # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "eff_creators"
+   },
+   "column": "last_mean",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "1.0",
+   "sign": "-",
+   "before": "stars. Per game, the change is",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "game_top1_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "5",
+   "sign": "",
+   "before": "an interval excluding zero, in",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {},
+   "column": "expr",
+   "scale": 1,
+   "abs": false,
+   "expr": {
+    "agg": "sum",
+    "table": "output/league_gap.csv",
+    "column": "direction",
+    "where": {
+     "metric": "game_top1_share",
+     "direction": 1
+    }
+   }
+  },
+  {
+   "token": "30",
+   "sign": "",
+   "before": "terval excluding zero, in # of",
+   "nth": 0,
+   "table": "output/breaks.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "game_top1_share"
+   },
+   "column": "seasons",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "3.0",
+   "sign": "-",
+   "before": "er in one: # where the gap was",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {
+    "wnba_year": 2026,
+    "metric": "game_top1_share"
+   },
+   "column": "gap",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "5.3",
+   "sign": "-",
+   "before": "# where the gap was # points (",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {
+    "wnba_year": 2026,
+    "metric": "game_top1_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "0.6",
+   "sign": "-",
+   "before": "ere the gap was # points (# to",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {
+    "wnba_year": 2026,
+    "metric": "game_top1_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "29.1%",
+   "sign": "",
+   "before": "s # points (# to #), the NBA's",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {
+    "wnba_year": 2026,
+    "metric": "game_top1_share"
+   },
+   "column": "nba_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "32.1%",
+   "sign": "",
+   "before": "he NBA's #% against the WNBA's",
+   "nth": 0,
+   "table": "output/league_gap.csv",
+   "where": {
+    "wnba_year": 2026,
+    "metric": "game_top1_share"
+   },
+   "column": "wnba_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "60.9%",
+   "sign": "",
+   "before": "NBA's assisted share rose from",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "assisted_share"
+   },
+   "column": "first_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "62.3%",
+   "sign": "",
+   "before": "assisted share rose from #% to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "assisted_share"
+   },
+   "column": "last_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "1.4",
+   "sign": "+",
+   "before": "ted share rose from #% to #% (",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "assisted_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "0.4",
+   "sign": "+",
+   "before": "m #% to #% (# points, interval",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "assisted_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "2.3",
+   "sign": "+",
+   "before": "to #% (# points, interval # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "nba",
+    "metric": "assisted_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "62.4%",
+   "sign": "",
+   "before": "l # to #), and the WNBA's from",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "assisted_share"
+   },
+   "column": "first_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "67.4%",
+   "sign": "",
+   "before": " #), and the WNBA's from #% to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "assisted_share"
+   },
+   "column": "last_mean",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "4.9",
+   "sign": "+",
+   "before": "and the WNBA's from #% to #% (",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "assisted_share"
+   },
+   "column": "change",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "3.5",
+   "sign": "+",
+   "before": "BA's from #% to #% (# interval",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "assisted_share"
+   },
+   "column": "lo",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "6.4",
+   "sign": "+",
+   "before": "from #% to #% (# interval # to",
+   "nth": 0,
+   "table": "output/era_change.csv",
+   "where": {
+    "league": "wnba",
+    "metric": "assisted_share"
+   },
+   "column": "hi",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "47.9%",
+   "sign": "",
+   "before": "son totals, the ## Hornets ran",
+   "nth": 0,
+   "table": "output/leaders.csv",
+   "where": {
+    "ranked_by": "top1_share",
+    "league": "nba",
+    "rank": 1
+   },
+   "column": "top1_share",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "46.8%",
+   "sign": "",
+   "before": "Chris Paul, and the ## Thunder",
+   "nth": 0,
+   "table": "output/leaders.csv",
+   "where": {
+    "ranked_by": "top1_share",
+    "league": "nba",
+    "rank": 2
+   },
+   "column": "top1_share",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "39.1%",
+   "sign": "",
+   "before": "nclude Trae Young's ## Hawks (",
+   "nth": 0,
+   "table": "output/leaders.csv",
+   "where": {
+    "ranked_by": "top1_z",
+    "league": "nba",
+    "rank": 2
+   },
+   "column": "top1_share",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "2.84",
+   "sign": "",
+   "before": "ude Trae Young's ## Hawks (#%,",
+   "nth": 0,
+   "table": "output/leaders.csv",
+   "where": {
+    "ranked_by": "top1_z",
+    "league": "nba",
+    "rank": 2
+   },
+   "column": "top1_z",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "37.4%",
+   "sign": "",
+   "before": "d Luka Doncic's ## Mavericks (",
+   "nth": 0,
+   "table": "output/leaders.csv",
+   "where": {
+    "ranked_by": "top1_z",
+    "league": "nba",
+    "rank": 6
+   },
+   "column": "top1_share",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "2.62",
+   "sign": "",
+   "before": "uka Doncic's ## Mavericks (#%,",
+   "nth": 0,
+   "table": "output/leaders.csv",
+   "where": {
+    "ranked_by": "top1_z",
+    "league": "nba",
+    "rank": 6
+   },
+   "column": "top1_z",
+   "scale": 1,
+   "abs": false
+  },
+  {
+   "token": "39.6%",
+   "sign": "",
+   "before": "Courtney Vandersloot's # Sky (",
+   "nth": 0,
+   "table": "output/leaders.csv",
+   "where": {
+    "ranked_by": "top1_share",
+    "league": "wnba",
+    "rank": 1
+   },
+   "column": "top1_share",
+   "scale": 100,
+   "abs": false
+  },
+  {
+   "token": "39.5%",
+   "sign": "",
+   "before": " and Caitlin Clark's # Fever (",
+   "nth": 0,
+   "table": "output/leaders.csv",
+   "where": {
+    "ranked_by": "top1_share",
+    "league": "wnba",
+    "rank": 2
+   },
+   "column": "top1_share",
+   "scale": 100,
+   "abs": false
+  }
+ ]
+}

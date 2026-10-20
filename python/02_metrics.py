@@ -16,7 +16,9 @@ Writes (committed):
   output/league_gap.csv     season x metric, seasons both leagues played
                             (the NBA season starting the year before the WNBA
                             season, so NBA 2024-25 sits beside WNBA 2025):
-                            NBA mean minus WNBA mean with a 95% Welch interval
+                            NBA mean minus WNBA mean with a 95% Welch interval;
+                            direction is 1 when the NBA is clearly higher, -1
+                            when the WNBA is, 0 when the interval spans zero
   output/leaders.csv        the 15 highest top1_share team-seasons per league,
                             and the 15 highest top1_z
   output/era_change.csv     league x metric: first five seasons against the
@@ -99,7 +101,8 @@ def league_gap(ts: pl.DataFrame) -> pl.DataFrame:
             d, lo, hi = lib.welch(n[m].to_list(), w[m].to_list())
             rows.append({"wnba_year": wy, "nba_season": lib.pbp_history.season_label("nba", ny),
                          "metric": m, "nba_mean": float(n[m].mean()), "wnba_mean": float(w[m].mean()),
-                         "gap": d, "lo": lo, "hi": hi})
+                         "gap": d, "lo": lo, "hi": hi,
+                         "direction": 1 if lo > 0 else (-1 if hi < 0 else 0)})
     return pl.DataFrame(rows).sort("metric", "wnba_year")
 
 

@@ -133,8 +133,12 @@ Rscript R/heliocentrism.R      # the same, independently, in R
 python python/03_reconcile.py  # Python against R, every cell
 python python/04_figures.py    # figures/
 python python/05_report.py     # this README's results
+python python/06_example_game.py  # one real team-game for the method diagram
+python python/07_diagrams.py   # explainer diagrams (figures/*.svg)
 bash run_checks.sh             # every gate
 ```
 
 Raw play-by-play stays local (NBA.com terms); `output/` holds team-season
-and player-season aggregates only.
+and player-season aggregates only, plus one illustrative team-game's
+creator totals and two of its plays (`output/example_game.csv`,
+`output/example_plays.csv`) for the method diagram.

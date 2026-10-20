@@ -1,0 +1,3 @@
+# heliocentrism-study docs/story.md: design constants and a formula definition
+95%  # the confidence level of every interval in the study, fixed by design
+1 @ effective number of creators (  # the numerator of the definition "1 divided by the sum of squared shares"

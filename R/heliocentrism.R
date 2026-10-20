@@ -123,7 +123,8 @@ gap <- bind_rows(lapply(YEARS$wnba, function(wy) {
   bind_rows(lapply(METRICS, function(m) {
     d <- welch(n[[m]], w[[m]])
     tibble(wnba_year = wy, nba_season = season_label("nba", ny), metric = m,
-           nba_mean = mean(n[[m]]), wnba_mean = mean(w[[m]]), gap = d[1], lo = d[2], hi = d[3])
+           nba_mean = mean(n[[m]]), wnba_mean = mean(w[[m]]), gap = d[1], lo = d[2], hi = d[3],
+           direction = if (d[2] > 0) 1L else if (d[3] < 0) -1L else 0L)
   }))
 })) |> arrange(metric, wnba_year)
 write_csv(gap, "output/league_gap_r.csv")

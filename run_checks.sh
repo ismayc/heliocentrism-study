@@ -28,5 +28,13 @@ Rscript R/heliocentrism.R >/dev/null
 $PY -I python/03_reconcile.py | tail -1
 
 echo
+echo "=== example game: the method diagram's game matches the crediting code ==="
+$PY -I python/06_example_game.py --check | tail -1
+
+echo
+echo "=== diagrams: every explainer SVG rebuilds identically ==="
+$PY -I python/07_diagrams.py --check | tail -1
+
+echo
 echo "=== report: README results match the outputs ==="
 $PY -I python/05_report.py --check
