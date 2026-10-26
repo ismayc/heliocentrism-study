@@ -3,7 +3,8 @@
 How concentrated is shot creation on NBA (1996-97 to 2025-26) and WNBA (1997
 to 2026) teams, and how has it changed? Personal research in the
 basketball-data-science family (backlog: `../hub/ideas/historical-analysis-ideas.md`,
-Round 2 #4). Decisions and their dates: `docs/design.md`. Private repo.
+Round 2 #4). Decisions and their dates: `docs/design.md`. Public repo with
+Pages from main:/docs; findings live in the memory dir, not `docs/findings/`.
 
 ## Data context
 

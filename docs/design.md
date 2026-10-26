@@ -45,5 +45,5 @@ Made while building (October 19, 2026), each for the reason given:
   1997 and 1998 match in 92% and 94% of team-games (the gamelog or the feed
   differs by an assist or two); every other season matches in at least 99.7%.
 - Games come only from the shared layer's finals status `ok` (see
-  `../safe-lead-study/docs/findings/score-stamp-jumps.md` for the score-jump
-  check behind that status).
+  `basketball-analysis-tools/pbp_history.py` for the score-jump check behind
+  that status).
